@@ -2,7 +2,7 @@ BINS = dwlb
 MANS = dwlb.1
 
 PREFIX ?= /usr/local
-CFLAGS += -Wall -Wextra -Wno-unused-parameter -Wno-format-truncation -g
+CFLAGS += -Wall -Wextra -Wno-unused-parameter -Wno-format-truncation
 
 all: $(BINS)
 
@@ -10,7 +10,7 @@ config.h:
 	cp config.def.h $@
 
 clean:
-	$(RM) $(BINS) $(addsuffix .o,$(BINS))
+	$(RM) $(BINS) *.o
 
 install: all
 	install -D -t $(PREFIX)/bin $(BINS)
@@ -46,7 +46,8 @@ dwl-ipc-unstable-v2-protocol.o: dwl-ipc-unstable-v2-protocol.h
 dwlb.o: utf8.h config.h xdg-shell-protocol.h xdg-output-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h dwl-ipc-unstable-v2-protocol.h
 
 # Protocol dependencies
-dwlb: xdg-shell-protocol.o xdg-output-unstable-v1-protocol.o wlr-layer-shell-unstable-v1-protocol.o dwl-ipc-unstable-v2-protocol.o
+dwlb: dwlb.o xdg-shell-protocol.o xdg-output-unstable-v1-protocol.o wlr-layer-shell-unstable-v1-protocol.o dwl-ipc-unstable-v2-protocol.o
+	$(CC) $(CFLAGS) $(LDFLAGS) $(LDLIBS) -o $@ $^
 
 # Library dependencies
 dwlb: CFLAGS+=$(shell pkg-config --cflags wayland-client wayland-cursor fcft pixman-1)
