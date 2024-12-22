@@ -67,36 +67,7 @@
 #define PROGRAM "dwlb"
 #define VERSION "0.2"
 #define USAGE								\
-	"usage: dwlb [OPTIONS]\n"					\
-	"Bar Config\n"							\
-	"	-hidden				bars will initially be hidden\n" \
-	"	-no-hidden			bars will not initially be hidden\n" \
-	"	-bottom				bars will initially be drawn at the bottom\n" \
-	"	-no-bottom			bars will initially be drawn at the top\n" \
-	"	-hide-vacant-tags		do not display empty and inactive tags\n" \
-	"	-no-hide-vacant-tags		display empty and inactive tags\n" \
-	"	-status-commands		enable in-line commands in status text\n" \
-	"	-no-status-commands		disable in-line commands in status text\n" \
-	"	-center-title			center title text on bar\n" \
-	"	-no-center-title		do not center title text on bar\n" \
-	"	-custom-title			do not display window title and treat the area as another status text element; see -title command\n" \
-	"	-no-custom-title		display current window title as normal\n" \
-	"	-active-color-title		title colors will use active colors\n" \
-	"	-no-active-color-title		title colors will use inactive colors\n" \
-	"	-font [FONT]			specify a font\n"	\
-	"	-tags [NUMBER] [FIRST]...[LAST]	if ipc is disabled, specify custom tag names. If NUMBER is 0, then no tag names should be given \n" \
-	"	-vertical-padding [PIXELS]	specify vertical pixel padding above and below text\n" \
-	"	-active-fg-color [COLOR]	specify text color of active tags or monitors\n" \
-	"	-active-bg-color [COLOR]	specify background color of active tags or monitors\n" \
-	"	-occupied-fg-color [COLOR]	specify text color of occupied tags\n" \
-	"	-occupied-bg-color [COLOR]	specify background color of occupied tags\n" \
-	"	-inactive-fg-color [COLOR]	specify text color of inactive tags or monitors\n" \
-	"	-inactive-bg-color [COLOR]	specify background color of inactive tags or monitors\n" \
-	"	-urgent-fg-color [COLOR]	specify text color of urgent tags\n" \
-	"	-urgent-bg-color [COLOR]	specify background color of urgent tags\n" \
-	"	-middle-bg-color [COLOR]	specify background color of the color in the middle of the bar\n" \
-	"	-middle-bg-color-selected [COLOR]	specify background color of the color in the middle of the bar, when selected\n" \
-	"	-scale [BUFFER_SCALE]		specify buffer scale value for integer scaling\n" \
+	"usage: dwlb [Command]\n"					\
 	"Commands\n"							\
 	"	-target-socket [SOCKET-NAME]	set the socket to send command to. Sockets can be found in `$XDG_RUNTIME_DIR/dwlb/`\n"\
 	"	-status	[OUTPUT] [TEXT]		set status text\n"	\
@@ -198,7 +169,7 @@ static char **layouts;
 static uint32_t layouts_l, layouts_c;
 
 static struct fcft_font *font;
-static uint32_t height, textpadding, buffer_scale;
+static uint32_t height, textpadding;
 
 static bool run_display;
 
@@ -1632,114 +1603,6 @@ main(int argc, char **argv)
 				DIE("Option -toggle-location requires an argument");
 			client_send_command(&sock_address, argv[i], "toggle-location", NULL, target_socket);
 			return 0;
-		} else if (!strcmp(argv[i], "-hide-vacant-tags")) {
-			hide_vacant = true;
-		} else if (!strcmp(argv[i], "-no-hide-vacant-tags")) {
-			hide_vacant = false;
-		} else if (!strcmp(argv[i], "-bottom")) {
-			bottom = true;
-		} else if (!strcmp(argv[i], "-no-bottom")) {
-			bottom = false;
-		} else if (!strcmp(argv[i], "-hidden")) {
-			hidden = true;
-		} else if (!strcmp(argv[i], "-no-hidden")) {
-			hidden = false;
-		} else if (!strcmp(argv[i], "-status-commands")) {
-			status_commands = true;
-		} else if (!strcmp(argv[i], "-no-status-commands")) {
-			status_commands = false;
-		} else if (!strcmp(argv[i], "-center-title")) {
-			center_title = true;
-		} else if (!strcmp(argv[i], "-no-center-title")) {
-			center_title = false;
-		} else if (!strcmp(argv[i], "-custom-title")) {
-			custom_title = true;
-		} else if (!strcmp(argv[i], "-no-custom-title")) {
-			custom_title = false;
-		} else if (!strcmp(argv[i], "-active-color-title")) {
-			active_color_title = true;
-		} else if (!strcmp(argv[i], "-no-active-color-title")) {
-			active_color_title = false; 
-		} else if (!strcmp(argv[i], "-font")) {
-			if (++i >= argc)
-				DIE("Option -font requires an argument");
-			fontstr = argv[i];
-		} else if (!strcmp(argv[i], "-vertical-padding")) {
-			if (++i >= argc)
-				DIE("Option -vertical-padding requires an argument");
-			vertical_padding = MAX(MIN(atoi(argv[i]), 100), 0);
-		} else if (!strcmp(argv[i], "-active-fg-color")) {
-			if (++i >= argc)
-				DIE("Option -active-fg-color requires an argument");
-			if (parse_color(argv[i], &active_fg_color) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-active-bg-color")) {
-			if (++i >= argc)
-				DIE("Option -active-bg-color requires an argument");
-			if (parse_color(argv[i], &active_bg_color) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-occupied-fg-color")) {
-			if (++i >= argc)
-				DIE("Option -occupied-fg-color requires an argument");
-			if (parse_color(argv[i], &occupied_fg_color) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-occupied-bg-color")) {
-			if (++i >= argc)
-				DIE("Option -occupied-bg-color requires an argument");
-			if (parse_color(argv[i], &occupied_bg_color) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-inactive-fg-color")) {
-			if (++i >= argc)
-				DIE("Option -inactive-fg-color requires an argument");
-			if (parse_color(argv[i], &inactive_fg_color) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-inactive-bg-color")) {
-			if (++i >= argc)
-				DIE("Option -inactive-bg-color requires an argument");
-			if (parse_color(argv[i], &inactive_bg_color) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-urgent-fg-color")) {
-			if (++i >= argc)
-				DIE("Option -urgent-fg-color requires an argument");
-			if (parse_color(argv[i], &urgent_fg_color) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-urgent-bg-color")) {
-			if (++i >= argc)
-				DIE("Option -urgent-bg-color requires an argument");
-			if (parse_color(argv[i], &urgent_bg_color) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-middle-bg-color-selected")) {
-			if (++i >= argc)
-				DIE("Option -middle-bg-color-selected requires an argument");
-			if (parse_color(argv[i], &middle_bg_color_selected) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-middle-bg-color")) {
-			if (++i >= argc)
-				DIE("Option -middle-bg-color requires an argument");
-			if (parse_color(argv[i], &middle_bg_color) == -1)
-				DIE("malformed color string");
-		} else if (!strcmp(argv[i], "-tags")) {
-			if (++i >= argc)
-				DIE("Option -tags requires at least one argument");
-			int v;
-			if ((v = atoi(argv[i])) < 0 || i + v >= argc)
-				DIE("-tags: invalid arguments");
-			if (tags) {
-				for (uint32_t j = 0; j < tags_l; j++)
-					free(tags[j]);
-				free(tags);
-			}
-			if (!(tags = malloc(v * sizeof(char *))))
-				EDIE("malloc");
-			for (int j = 0; j < v; j++)
-				if (!(tags[j] = strdup(argv[i + 1 + j])))
-					EDIE("strdup");
-			tags_l = tags_c = v;
-			i += v;
-		} else if (!strcmp(argv[i], "-scale")) {
-			if (++i >= argc)
-				DIE("Option -scale requires an argument");
-			buffer_scale = strtoul(argv[i], &argv[i] + strlen(argv[i]), 10);
 		} else if (!strcmp(argv[i], "-v")) {
 			fprintf(stderr, PROGRAM " " VERSION "\n");
 			return 0;
