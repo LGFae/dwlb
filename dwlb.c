@@ -27,33 +27,18 @@
 #include "wlr-layer-shell-unstable-v1-protocol.h"
 #include "dwl-ipc-unstable-v2-protocol.h"
 
-#define DIE(fmt, ...)						\
-	do {							\
-		cleanup();					\
-		fprintf(stderr, fmt "\n", ##__VA_ARGS__);	\
-		exit(1);					\
-	} while (0)
-#define EDIE(fmt, ...)						\
-	DIE(fmt ": %s", ##__VA_ARGS__, strerror(errno));
+#define MIN(a, b)	((a) < (b) ? (a) : (b))
+#define MAX(a, b)	((a) > (b) ? (a) : (b))
+#define LENGTH(x)	(sizeof (x) / sizeof (x[0]))
 
-#define MIN(a, b)				\
-	((a) < (b) ? (a) : (b))
-#define MAX(a, b)				\
-	((a) > (b) ? (a) : (b))
-#define LENGTH(x)				\
-	(sizeof x / sizeof x[0])
-
-#define ARRAY_INIT_CAP 16
 #define ARRAY_EXPAND(arr, len, cap, inc)				\
 	do {								\
 		uint32_t new_len, new_cap;				\
 		new_len = (len) + (inc);				\
 		if (new_len > (cap)) {					\
 			new_cap = new_len * 2;				\
-			if (new_cap < ARRAY_INIT_CAP)			\
-				new_cap = ARRAY_INIT_CAP;		\
 			if (!((arr) = realloc((arr), sizeof(*(arr)) * new_cap))) \
-				EDIE("realloc");			\
+				die("realloc:");			\
 			(cap) = new_cap;				\
 		}							\
 		(len) = new_len;					\
@@ -124,7 +109,7 @@ typedef struct {
 	uint32_t width, height;
 	uint32_t textpadding;
 	uint32_t stride, bufsize;
-	
+
 	uint32_t mtags, ctags, urg, sel;
 	char *layout, *window_title;
 	uint32_t layout_idx, last_layout_idx;
@@ -177,6 +162,27 @@ static bool run_display;
 
 #include "config.h"
 
+void
+die(const char *fmt, ...) {
+	va_list ap;
+
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+
+	if (fmt[0] && fmt[strlen(fmt)-1] == ':') {
+		fputc(' ', stderr);
+		perror(NULL);
+	} else {
+		fputc('\n', stderr);
+	}
+
+	if (socketpath)
+		unlink(socketpath);
+
+	exit(1);
+}
+
 static void
 wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
 {
@@ -192,7 +198,7 @@ static const struct wl_buffer_listener wl_buffer_listener = {
 static int
 allocate_shm_file(size_t size)
 {
-	int fd = memfd_create("surface", MFD_CLOEXEC);
+	int fd = memfd_create("surface", MFD_CLOEXEC | MFD_ALLOW_SEALING);
 	if (fd == -1)
 		return -1;
 	int ret;
@@ -231,7 +237,7 @@ draw_text(char *text,
 
 	bool draw_fg = foreground && fg_color;
 	bool draw_bg = background && bg_color;
-	
+
 	pixman_image_t *fg_fill;
 	pixman_color_t *cur_bg_color;
 	if (draw_fg)
@@ -254,7 +260,7 @@ draw_text(char *text,
 				color_ind++;
 			}
 		}
-		
+
 		/* Returns nonzero if more bytes are needed */
 		if (utf8decode(&state, &codepoint, *p))
 			continue;
@@ -292,7 +298,7 @@ draw_text(char *text,
 					x + glyph->x, y - glyph->y, glyph->width, glyph->height);
 			}
 		}
-		
+
 		if (draw_bg) {
 			pixman_image_fill_boxes(PIXMAN_OP_OVER, background,
 						cur_bg_color, 1, &(pixman_box32_t){
@@ -300,16 +306,16 @@ draw_text(char *text,
 							.y1 = 0, .y2 = buf_height
 						});
 		}
-		
+
 		/* increment pen position */
 		x = nx;
 	}
-	
+
 	if (draw_fg)
 		pixman_image_unref(fg_fill);
 	if (!last_cp)
 		return ix;
-	
+
 	nx = x + padding;
 	if (draw_bg) {
 		/* Fill padding background */
@@ -324,7 +330,7 @@ draw_text(char *text,
 						.y1 = 0, .y2 = buf_height
 					});
 	}
-	
+
 	return nx;
 }
 
@@ -335,7 +341,7 @@ static int
 draw_frame(Bar *bar)
 {
 	/* Allocate buffer to be attached to the surface */
-        int fd = allocate_shm_file(bar->bufsize);
+    int fd = allocate_shm_file(bar->bufsize);
 	if (fd == -1)
 		return -1;
 
@@ -353,11 +359,11 @@ draw_frame(Bar *bar)
 
 	/* Pixman image corresponding to main buffer */
 	pixman_image_t *final = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, data, bar->width * 4);
-	
+
 	/* Text background and foreground layers */
 	pixman_image_t *foreground = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, NULL, bar->width * 4);
 	pixman_image_t *background = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, NULL, bar->width * 4);
-	
+
 	/* Draw on images */
 	uint32_t x = 0;
 	uint32_t y = (bar->height + font->ascent - font->descent) / 2;
@@ -368,13 +374,13 @@ draw_frame(Bar *bar)
 		const bool active = bar->mtags & 1 << i;
 		const bool occupied = bar->ctags & 1 << i;
 		const bool urgent = bar->urg & 1 << i;
-		
+
 		if (hide_vacant && !active && !occupied && !urgent)
 			continue;
 
 		pixman_color_t *fg_color = urgent ? &urgent_fg_color : (active ? &active_fg_color : (occupied ? &occupied_fg_color : &inactive_fg_color));
 		pixman_color_t *bg_color = urgent ? &urgent_bg_color : (active ? &active_bg_color : (occupied ? &occupied_bg_color : &inactive_bg_color));
-		
+
 		if (!hide_vacant && occupied) {
 			pixman_image_fill_boxes(PIXMAN_OP_SRC, foreground,
 						fg_color, 1, &(pixman_box32_t){
@@ -391,15 +397,15 @@ draw_frame(Bar *bar)
 							});
 			}
 		}
-		
+
 		x = draw_text(tags[i], x, y, foreground, background, fg_color, bg_color,
 			      bar->width, bar->height, bar->textpadding, NULL, 0);
 	}
-	
+
 	x = draw_text(bar->layout, x, y, foreground, background,
 		      &inactive_fg_color, &inactive_bg_color, bar->width,
 		      bar->height, bar->textpadding, NULL, 0);
-	
+
 	uint32_t status_width = TEXT_WIDTH(bar->status.text, bar->width - x, bar->textpadding);
 	draw_text(bar->status.text, bar->width - status_width, y, foreground,
 		  background, &inactive_fg_color, &inactive_bg_color,
@@ -420,7 +426,7 @@ draw_frame(Bar *bar)
 					.y1 = 0, .y2 = bar->height
 				});
 	x = nx;
-	
+
 	x = draw_text(custom_title ? bar->title.text : bar->window_title,
 		      x, y, foreground, background,
 		      (bar->sel && active_color_title) ? &active_fg_color : &inactive_fg_color,
@@ -443,7 +449,7 @@ draw_frame(Bar *bar)
 	pixman_image_unref(foreground);
 	pixman_image_unref(background);
 	pixman_image_unref(final);
-	
+
 	munmap(data, bar->bufsize);
 
 	wl_surface_set_buffer_scale(bar->wl_surface, buffer_scale);
@@ -463,12 +469,12 @@ layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 	h = h * buffer_scale;
 
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
-	
+
 	Bar *bar = (Bar *)data;
-	
+
 	if (bar->configured && w == bar->width && h == bar->height)
 		return;
-	
+
 	bar->width = w;
 	bar->height = h;
 	bar->stride = bar->width * 4;
@@ -489,21 +495,14 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
 };
 
 static void
-cleanup(void)
-{
-	if (socketpath)
-		unlink(socketpath);
-}
-
-static void
 output_name(void *data, struct zxdg_output_v1 *xdg_output, const char *name)
 {
 	Bar *bar = (Bar *)data;
-	
+
 	if (bar->xdg_output_name)
 		free(bar->xdg_output_name);
 	if (!(bar->xdg_output_name = strdup(name)))
-		EDIE("strdup");
+		die("strdup:");
 }
 
 static void
@@ -585,7 +584,7 @@ pointer_leave(void *data, struct wl_pointer *pointer,
 	      uint32_t serial, struct wl_surface *surface)
 {
 	Seat *seat = (Seat *)data;
-	
+
 	seat->bar = NULL;
 }
 
@@ -603,7 +602,7 @@ pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,
 	       wl_fixed_t surface_x, wl_fixed_t surface_y)
 {
 	Seat *seat = (Seat *)data;
-	
+
 	seat->pointer_x = wl_fixed_to_int(surface_x);
 	seat->pointer_y = wl_fixed_to_int(surface_y);
 }
@@ -665,7 +664,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		} else {
 			/* Clicked on status */
 			for (i = 0; i < seat->bar->status.buttons_l; i++) {
-			
+
 				if (seat->pointer_button == seat->bar->status.buttons[i].btn
 				    && seat->pointer_x >= status_x + seat->bar->textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
 				    && seat->pointer_x < status_x + seat->bar->textpadding + seat->bar->status.buttons[i].x2 / buffer_scale) {
@@ -675,7 +674,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			}
 		}
 	}
-	
+
 	seat->pointer_button = 0;
 }
 
@@ -746,7 +745,7 @@ seat_capabilities(void *data, struct wl_seat *wl_seat,
 		  uint32_t capabilities)
 {
 	Seat *seat = (Seat *)data;
-	
+
 	uint32_t has_pointer = capabilities & WL_SEAT_CAPABILITY_POINTER;
 	if (has_pointer && !seat->wl_pointer) {
 		seat->wl_pointer = wl_seat_get_pointer(seat->wl_seat);
@@ -772,12 +771,12 @@ show_bar(Bar *bar)
 {
 	bar->wl_surface = wl_compositor_create_surface(compositor);
 	if (!bar->wl_surface)
-		DIE("Could not create wl_surface");
+		die("Could not create wl_surface");
 
 	bar->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell, bar->wl_surface, bar->wl_output,
 								   ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM, PROGRAM);
 	if (!bar->layer_surface)
-		DIE("Could not create layer_surface");
+		die("Could not create layer_surface");
 	zwlr_layer_surface_v1_add_listener(bar->layer_surface, &layer_surface_listener, bar);
 
 	zwlr_layer_surface_v1_set_size(bar->layer_surface, 0, bar->height / buffer_scale);
@@ -806,12 +805,12 @@ dwl_wm_tags(void *data, struct zdwl_ipc_manager_v2 *dwl_wm,
 	uint32_t amount)
 {
 	if (!tags && !(tags = malloc(amount * sizeof(char *))))
-		EDIE("malloc");
+		die("malloc:");
 	uint32_t i = tags_l;
 	ARRAY_EXPAND(tags, tags_l, tags_c, MAX(0, (int)amount - (int)tags_l));
 	for (; i < amount; i++)
 		if (!(tags[i] = strdup(tags_names[MIN(i, LENGTH(tags_names)-1)])))
-			EDIE("strdup");
+			die("strdup:");
 }
 
 static void
@@ -821,7 +820,7 @@ dwl_wm_layout(void *data, struct zdwl_ipc_manager_v2 *dwl_wm,
 	char **ptr;
 	ARRAY_APPEND(layouts, layouts_l, layouts_c, ptr);
 	if (!(*ptr = strdup(name)))
-		EDIE("strdup");
+		die("strdup:");
 }
 
 static const struct zdwl_ipc_manager_v2_listener dwl_wm_listener = {
@@ -892,7 +891,7 @@ dwl_wm_output_title(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
 	if (bar->window_title)
 		free(bar->window_title);
 	if (!(bar->window_title = strdup(title)))
-		EDIE("strdup");
+		die("strdup:");
 }
 
 static void
@@ -910,7 +909,7 @@ dwl_wm_output_layout_symbol(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output
 	if (layouts[bar->layout_idx])
 		free(layouts[bar->layout_idx]);
 	if (!(layouts[bar->layout_idx] = strdup(layout)))
-		EDIE("strdup");
+		die("strdup:");
 	bar->layout = layouts[bar->layout_idx];
 }
 
@@ -956,14 +955,14 @@ setup_bar(Bar *bar)
 
 	bar->xdg_output = zxdg_output_manager_v1_get_xdg_output(output_manager, bar->wl_output);
 	if (!bar->xdg_output)
-		DIE("Could not create xdg_output");
+		die("Could not create xdg_output");
 	zxdg_output_v1_add_listener(bar->xdg_output, &output_listener, bar);
 
 	bar->dwl_wm_output = zdwl_ipc_manager_v2_get_output(dwl_wm, bar->wl_output);
 	if (!bar->dwl_wm_output)
-		DIE("Could not create dwl_wm_output");
+		die("Could not create dwl_wm_output");
 	zdwl_ipc_output_v2_add_listener(bar->dwl_wm_output, &dwl_wm_output_listener, bar);
-	
+
 	if (!bar->hidden)
 		show_bar(bar);
 }
@@ -986,7 +985,7 @@ handle_global(void *data, struct wl_registry *registry,
 	} else if (!strcmp(interface, wl_output_interface.name)) {
 		Bar *bar = calloc(1, sizeof(Bar));
 		if (!bar)
-			EDIE("calloc");
+			die("calloc:");
 		bar->registry_name = name;
 		bar->wl_output = wl_registry_bind(registry, name, &wl_output_interface, 1);
 		if (run_display)
@@ -995,7 +994,7 @@ handle_global(void *data, struct wl_registry *registry,
 	} else if (!strcmp(interface, wl_seat_interface.name)) {
 		Seat *seat = calloc(1, sizeof(Seat));
 		if (!seat)
-			EDIE("calloc");
+			die("calloc:");
 		seat->registry_name = name;
 		seat->wl_seat = wl_registry_bind(registry, name, &wl_seat_interface, 7);
 		wl_seat_add_listener(seat->wl_seat, &seat_listener, seat);
@@ -1042,7 +1041,7 @@ handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
 {
 	Bar *bar;
 	Seat *seat;
-	
+
 	wl_list_for_each(bar, &bar_list, link) {
 		if (bar->registry_name == name) {
 			wl_list_remove(&bar->link);
@@ -1152,7 +1151,7 @@ parse_into_customtext(CustomText *ct, char *text)
 		Button *right_button = NULL;
 		Button *scrollup_button = NULL;
 		Button *scrolldown_button = NULL;
-	
+
 		for (char *p = text; *p && str_pos < sizeof(ct->text) - 1; p++) {
 			if (state == UTF8_ACCEPT && *p == '^') {
 				p++;
@@ -1162,7 +1161,7 @@ parse_into_customtext(CustomText *ct, char *text)
 						continue;
 					*arg++ = '\0';
 					*end = '\0';
-				
+
 					if (!strcmp(p, "bg")) {
 						Color *color;
 						ARRAY_APPEND(ct->colors, ct->colors_l, ct->colors_c, color);
@@ -1231,30 +1230,30 @@ parse_into_customtext(CustomText *ct, char *text)
 							snprintf(scrolldown_button->command, sizeof scrolldown_button->command, "%s", arg);
 							scrolldown_button->x1 = x;
 						}
-					} 
+					}
 
 					*--arg = '(';
 					*end = ')';
-				
+
 					p = end;
 					continue;
 				}
 			}
 
 			ct->text[str_pos++] = *p;
-			
+
 			if (utf8decode(&state, &codepoint, *p))
 				continue;
-			
+
 			const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(font, codepoint, FCFT_SUBPIXEL_NONE);
 			if (!glyph)
 				continue;
-				
+
 			long kern = 0;
 			if (last_cp)
 				fcft_kerning(font, last_cp, codepoint, &kern, NULL);
 			last_cp = codepoint;
-			
+
 			x += kern + glyph->advance.x;
 		}
 
@@ -1268,8 +1267,8 @@ parse_into_customtext(CustomText *ct, char *text)
 			scrollup_button->x2 = x;
 		if (scrolldown_button)
 			scrolldown_button->x2 = x;
-	
-		
+
+
 		ct->text[str_pos] = '\0';
 	} else {
 		snprintf(ct->text, sizeof ct->text, "%s", text);
@@ -1300,10 +1299,10 @@ read_socket(void)
 {
 	int cli_fd;
 	if ((cli_fd = accept(sock_fd, NULL, 0)) == -1)
-		EDIE("accept");
+		die("accept:");
 	ssize_t len = recv(cli_fd, sockbuf, sizeof sockbuf - 1, 0);
 	if (len == -1)
-		EDIE("recv");
+		die("recv:");
 	close(cli_fd);
 	if (len == 0)
 		return;
@@ -1313,10 +1312,10 @@ read_socket(void)
 	wordend = (char *)&sockbuf;
 
 	ADVANCE_IF_LAST_RET();
-		
+
 	Bar *bar = NULL, *it;
 	bool all = false;
-		
+
 	if (!strcmp(wordbeg, "all")) {
 		all = true;
 	} else if (!strcmp(wordbeg, "selected")) {
@@ -1334,10 +1333,10 @@ read_socket(void)
 			}
 		}
 	}
-		
+
 	if (!all && !bar)
 		return;
-	
+
 	ADVANCE();
 
 	if (!strcmp(wordbeg, "status")) {
@@ -1412,7 +1411,7 @@ read_socket(void)
 			wl_list_for_each(bar, &bar_list, link)
 				if (bar->bottom)
 					set_top(bar);
-						
+
 		} else {
 			if (bar->bottom)
 				set_top(bar);
@@ -1422,7 +1421,7 @@ read_socket(void)
 			wl_list_for_each(bar, &bar_list, link)
 				if (!bar->bottom)
 					set_bottom(bar);
-						
+
 		} else {
 			if (!bar->bottom)
 				set_bottom(bar);
@@ -1460,15 +1459,15 @@ event_loop(void)
 			if (errno == EINTR)
 				continue;
 			else
-				EDIE("select");
+				die("select:");
 		}
-		
+
 		if (FD_ISSET(wl_fd, &rfds))
 			if (wl_display_dispatch(display) == -1)
 				break;
 		if (FD_ISSET(sock_fd, &rfds))
 			read_socket();
-		
+
 		Bar *bar;
 		wl_list_for_each(bar, &bar_list, link) {
 			if (bar->redraw) {
@@ -1487,13 +1486,13 @@ client_send_command(struct sockaddr_un *sock_address, const char *output,
 	size_t len;
 	DIR *dir;
 	if (!(dir = opendir(socketdir)))
-		EDIE("Could not open directory '%s'", socketdir);
+		die("Could not open directory '%s':", socketdir);
 
 	if (data)
 		len = snprintf(sockbuf, sizeof(sockbuf), "%s %s %s", output, cmd, data);
 	else
 		len = snprintf(sockbuf, sizeof(sockbuf), "%s %s", output, cmd);
-	
+
 	struct dirent *de;
 	bool newfd = true;
 
@@ -1502,7 +1501,7 @@ client_send_command(struct sockaddr_un *sock_address, const char *output,
 		if (!strncmp(de->d_name, "dwlb-", 5)) {
 			if (!target_socket || !strncmp(de -> d_name, target_socket, 6)){
 				if (newfd && (sock_fd = socket(AF_UNIX, SOCK_STREAM, 1)) == -1)
-					EDIE("socket");
+					die("socket:");
 				snprintf(sock_address->sun_path, sizeof sock_address->sun_path, "%s/%s", socketdir, de->d_name);
 				if (connect(sock_fd, (struct sockaddr *) sock_address, sizeof(*sock_address)) == -1) {
 					newfd = false;
@@ -1536,11 +1535,11 @@ main(int argc, char **argv)
 
 	/* Establish socket directory */
 	if (!(xdgruntimedir = getenv("XDG_RUNTIME_DIR")))
-		DIE("Could not retrieve XDG_RUNTIME_DIR");
+		die("Could not retrieve XDG_RUNTIME_DIR");
 	snprintf(socketdir, sizeof socketdir, "%s/dwlb", xdgruntimedir);
 	if (mkdir(socketdir, S_IRWXU) == -1)
 		if (errno != EEXIST)
-			EDIE("Could not create directory '%s'", socketdir);
+			die("Could not create directory '%s':", socketdir);
 	sock_address.sun_family = AF_UNIX;
 
 	/* Parse options */
@@ -1548,7 +1547,7 @@ main(int argc, char **argv)
 	int i = 1;
 	if (argc > 1 && !strcmp(argv[1], "-target-socket")) {
 		if (2 >= argc) {
-			DIE("Option -socket requires an argument");
+			die("Option -socket requires an argument");
 		}
 		target_socket = argv[2];
 		i += 2;
@@ -1556,12 +1555,12 @@ main(int argc, char **argv)
 	for (; i < argc; i++) {
 		if (!strcmp(argv[i], "-status")) {
 			if (++i + 1 >= argc)
-				DIE("Option -status requires two arguments");
+				die("Option -status requires two arguments");
 			client_send_command(&sock_address, argv[i], "status", argv[i + 1], target_socket);
 			return 0;
 		} else if (!strcmp(argv[i], "-status-stdin")) {
 			if (++i >= argc)
-				DIE("Option -status-stdin requires an argument");
+				die("Option -status-stdin requires an argument");
 			char *status = malloc(TEXT_MAX * sizeof(char));
 			while (fgets(status, TEXT_MAX-1, stdin)) {
 				status[strlen(status)-1] = '\0';
@@ -1571,37 +1570,37 @@ main(int argc, char **argv)
 			return 0;
 		} else if (!strcmp(argv[i], "-title")) {
 			if (++i + 1 >= argc)
-				DIE("Option -title requires two arguments");
+				die("Option -title requires two arguments");
 			client_send_command(&sock_address, argv[i], "title", argv[i + 1], target_socket);
 			return 0;
 		} else if (!strcmp(argv[i], "-show")) {
 			if (++i >= argc)
-				DIE("Option -show requires an argument");
+				die("Option -show requires an argument");
 			client_send_command(&sock_address, argv[i], "show", NULL, target_socket);
 			return 0;
 		} else if (!strcmp(argv[i], "-hide")) {
 			if (++i >= argc)
-				DIE("Option -hide requires an argument");
+				die("Option -hide requires an argument");
 			client_send_command(&sock_address, argv[i], "hide", NULL, target_socket);
 			return 0;
 		} else if (!strcmp(argv[i], "-toggle-visibility")) {
 			if (++i >= argc)
-				DIE("Option -toggle requires an argument");
+				die("Option -toggle requires an argument");
 			client_send_command(&sock_address, argv[i], "toggle-visibility", NULL, target_socket);
 			return 0;
 		} else if (!strcmp(argv[i], "-set-top")) {
 			if (++i >= argc)
-				DIE("Option -set-top requires an argument");
+				die("Option -set-top requires an argument");
 			client_send_command(&sock_address, argv[i], "set-top", NULL, target_socket);
 			return 0;
 		} else if (!strcmp(argv[i], "-set-bottom")) {
 			if (++i >= argc)
-				DIE("Option -set-bottom requires an argument");
+				die("Option -set-bottom requires an argument");
 			client_send_command(&sock_address, argv[i], "set-bottom", NULL, target_socket);
 			return 0;
 		} else if (!strcmp(argv[i], "-toggle-location")) {
 			if (++i >= argc)
-				DIE("Option -toggle-location requires an argument");
+				die("Option -toggle-location requires an argument");
 			client_send_command(&sock_address, argv[i], "toggle-location", NULL, target_socket);
 			return 0;
 		} else if (!strcmp(argv[i], "-v")) {
@@ -1611,23 +1610,23 @@ main(int argc, char **argv)
 			fprintf(stderr, USAGE);
 			return 0;
 		} else {
-			DIE("Option '%s' not recognized\n" USAGE, argv[i]);
+			die("Option '%s' not recognized\n" USAGE, argv[i]);
 		}
 	}
 
 	/* Set up display and protocols */
 	display = wl_display_connect(NULL);
 	if (!display)
-		DIE("Failed to create display");
+		die("Failed to create display");
 
 	wl_list_init(&bar_list);
 	wl_list_init(&seat_list);
-	
+
 	struct wl_registry *registry = wl_display_get_registry(display);
 	wl_registry_add_listener(registry, &registry_listener, NULL);
 	wl_display_roundtrip(display);
 	if (!compositor || !shm || !layer_shell || !output_manager || (!dwl_wm))
-		DIE("Compositor does not support all needed protocols");
+		die("Compositor does not support all needed protocols");
 
 	/* Load selected font */
 	fcft_init(FCFT_LOG_COLORIZE_AUTO, 0, FCFT_LOG_CLASS_ERROR);
@@ -1637,7 +1636,7 @@ main(int argc, char **argv)
 	char buf[10];
 	snprintf(buf, sizeof buf, "dpi=%u", dpi);
 	if (!(font = fcft_from_name(1, (const char *[]) {fontstr}, buf)))
-		DIE("Could not load font");
+		die("Could not load font");
 	textpadding = font->height / 2;
 	height = font->height / buffer_scale + vertical_padding * 2;
 
@@ -1650,7 +1649,7 @@ main(int argc, char **argv)
 	bool found = false;
 	for (uint32_t i = 0; i < 50; i++) {
 		if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 1)) == -1)
-			DIE("socket");
+			die("socket");
 		snprintf(sock_address.sun_path, sizeof sock_address.sun_path, "%s/dwlb-%i", socketdir, i);
 		if (connect(sock_fd, (struct sockaddr *)&sock_address, sizeof sock_address) == -1) {
 			found = true;
@@ -1659,14 +1658,14 @@ main(int argc, char **argv)
 		close(sock_fd);
 	}
 	if (!found)
-		DIE("Could not secure a socket path");
+		die("Could not secure a socket path");
 
 	socketpath = (char *)&sock_address.sun_path;
 	unlink(socketpath);
 	if (bind(sock_fd, (struct sockaddr *)&sock_address, sizeof sock_address) == -1)
-		EDIE("bind");
+		die("bind:");
 	if (listen(sock_fd, SOMAXCONN) == -1)
-		EDIE("listen");
+		die("listen:");
 	fcntl(sock_fd, F_SETFD, FD_CLOEXEC | fcntl(sock_fd, F_GETFD));
 
 	/* Set up signals */
@@ -1674,7 +1673,7 @@ main(int argc, char **argv)
 	signal(SIGHUP, sig_handler);
 	signal(SIGTERM, sig_handler);
 	signal(SIGCHLD, SIG_IGN);
-	
+
 	/* Run */
 	run_display = true;
 	event_loop();
@@ -1682,7 +1681,7 @@ main(int argc, char **argv)
 	/* Clean everything up */
 	close(sock_fd);
 	unlink(socketpath);
-	
+
 	if (tags) {
 		for (uint32_t i = 0; i < tags_l; i++)
 			free(tags[i]);
@@ -1698,14 +1697,14 @@ main(int argc, char **argv)
 		teardown_bar(bar);
 	wl_list_for_each_safe(seat, seat2, &seat_list, link)
 		teardown_seat(seat);
-	
+
 	zwlr_layer_shell_v1_destroy(layer_shell);
 	zxdg_output_manager_v1_destroy(output_manager);
 	zdwl_ipc_manager_v2_destroy(dwl_wm);
-	
+
 	fcft_destroy(font);
 	fcft_fini();
-	
+
 	wl_shm_destroy(shm);
 	wl_compositor_destroy(compositor);
 	wl_registry_destroy(registry);
