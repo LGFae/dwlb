@@ -1,5 +1,4 @@
 dwlb
-config.h
 *.o
 wlr-layer-shell-unstable-v1-protocol.c
 wlr-layer-shell-unstable-v1-protocol.h
@@ -9,3 +8,7 @@ xdg-output-unstable-v1-protocol.c
 xdg-output-unstable-v1-protocol.h
 dwl-ipc-unstable-v2-protocol.c
 dwl-ipc-unstable-v2-protocol.h
+.cache
+.clangd
+compile_commands.json
+perf.data

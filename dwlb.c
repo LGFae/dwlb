@@ -229,7 +229,7 @@ expand_shm_file(Bar* bar, size_t size)
 		if (ret == -1) {
 			close(bar->shm_fd);
 			bar->shm_fd = -1;
-		} else { 
+		} else {
 			bar->bufsize = size;
 		}
 	}
@@ -241,8 +241,8 @@ draw_text(char *text,
 	  uint32_t y,
 	  pixman_image_t *foreground,
 	  pixman_image_t *background,
-	  pixman_color_t *fg_color,
-	  pixman_color_t *bg_color,
+	  pixman_color_t const *fg_color,
+	  pixman_color_t const *bg_color,
 	  uint32_t max_x,
 	  uint32_t buf_height,
 	  uint32_t padding,
@@ -262,7 +262,7 @@ draw_text(char *text,
 	bool draw_bg = background && bg_color;
 
 	pixman_image_t *fg_fill;
-	pixman_color_t *cur_bg_color;
+	pixman_color_t const *cur_bg_color;
 	if (draw_fg)
 		fg_fill = pixman_image_create_solid_fill(fg_color);
 	if (draw_bg)
@@ -364,7 +364,7 @@ static int
 draw_frame(Bar *bar)
 {
 	uint32_t *data = mmap(NULL, bar->bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, bar->shm_fd, 0);
-	if (data == MAP_FAILED) 
+	if (data == MAP_FAILED)
 		die("shared memory mmap:");
 
 	struct wl_shm_pool *pool = wl_shm_create_pool(shm, bar->shm_fd, bar->bufsize);
@@ -396,8 +396,8 @@ draw_frame(Bar *bar)
 		if (hide_vacant && !active && !occupied && !urgent)
 			continue;
 
-		pixman_color_t *fg_color = urgent ? &urgent_fg_color : (active ? &active_fg_color : (occupied ? &occupied_fg_color : &inactive_fg_color));
-		pixman_color_t *bg_color = urgent ? &urgent_bg_color : (active ? &active_bg_color : (occupied ? &occupied_bg_color : &inactive_bg_color));
+		pixman_color_t const *fg_color = urgent ? &urgent_fg_color : (active ? &active_fg_color : (occupied ? &occupied_fg_color : &inactive_fg_color));
+		pixman_color_t const *bg_color = urgent ? &urgent_bg_color : (active ? &active_bg_color : (occupied ? &occupied_bg_color : &inactive_bg_color));
 
 		if (!hide_vacant && occupied) {
 			pixman_image_fill_boxes(PIXMAN_OP_SRC, foreground,
