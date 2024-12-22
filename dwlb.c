@@ -68,6 +68,8 @@
 #define VERSION "0.2"
 #define USAGE								\
 	"usage: dwlb [Command]\n"					\
+	"'all' will apply the command on all outputs, while 'selected' will\n" \
+    "apply to the current select output.\n"					\
 	"Commands\n"							\
 	"	-target-socket [SOCKET-NAME]	set the socket to send command to. Sockets can be found in `$XDG_RUNTIME_DIR/dwlb/`\n"\
 	"	-status	[OUTPUT] [TEXT]		set status text\n"	\
@@ -1482,17 +1484,16 @@ static void
 client_send_command(struct sockaddr_un *sock_address, const char *output,
 		    const char *cmd, const char *data, const char *target_socket)
 {
+	size_t len;
 	DIR *dir;
 	if (!(dir = opendir(socketdir)))
 		EDIE("Could not open directory '%s'", socketdir);
 
 	if (data)
-		snprintf(sockbuf, sizeof sockbuf, "%s %s %s", output, cmd, data);
+		len = snprintf(sockbuf, sizeof(sockbuf), "%s %s %s", output, cmd, data);
 	else
-		snprintf(sockbuf, sizeof sockbuf, "%s %s", output, cmd);
+		len = snprintf(sockbuf, sizeof(sockbuf), "%s %s", output, cmd);
 	
-	size_t len = strlen(sockbuf);
-			
 	struct dirent *de;
 	bool newfd = true;
 
