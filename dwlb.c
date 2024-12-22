@@ -162,7 +162,7 @@ static bool run_display;
 
 #include "config.h"
 
-void
+static void
 die(const char *fmt, ...) {
 	va_list ap;
 
@@ -198,10 +198,20 @@ static const struct wl_buffer_listener wl_buffer_listener = {
 static int
 allocate_shm_file(size_t size)
 {
-	int fd = memfd_create("surface", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+	int ret, fd;
+
+	fd = memfd_create("surface", MFD_CLOEXEC | MFD_ALLOW_SEALING);
 	if (fd == -1)
 		return -1;
-	int ret;
+
+	do {
+		ret = fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_SEAL);
+	} while (ret == -1 && errno == EINTR);
+	if (ret == -1) {
+		close(fd);
+		return -1;
+	}
+
 	do {
 		ret = ftruncate(fd, size);
 	} while (ret == -1 && errno == EINTR);
@@ -209,6 +219,7 @@ allocate_shm_file(size_t size)
 		close(fd);
 		return -1;
 	}
+
 	return fd;
 }
 
