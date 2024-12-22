@@ -1693,10 +1693,15 @@ main(int argc, char **argv)
 	fcntl(sock_fd, F_SETFD, FD_CLOEXEC | fcntl(sock_fd, F_GETFD));
 
 	/* Set up signals */
-	signal(SIGINT, sig_handler);
-	signal(SIGHUP, sig_handler);
-	signal(SIGTERM, sig_handler);
-	signal(SIGCHLD, SIG_IGN);
+	struct sigaction sa;
+	sa.sa_handler = sig_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGHUP, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
+	sa.sa_handler = SIG_IGN;
+	sigaction(SIGCHLD, &sa, NULL);
 
 	/* Run */
 	run_display = true;
