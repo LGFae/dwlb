@@ -385,6 +385,9 @@ draw_frame(Bar *bar)
 	uint32_t boxs = font->height / 9;
 	uint32_t boxw = font->height / 6 + 2;
 
+	x = draw_text("TODO", x, y, foreground, background, &active_fg_color, &active_bg_color,
+			  bar->width, bar->height, bar->textpadding, NULL, 0);
+
 	for (uint32_t i = 0; i < tags_l; i++) {
 		const bool active = bar->mtags & 1 << i;
 		const bool occupied = bar->ctags & 1 << i;
@@ -583,7 +586,9 @@ pointer_enter(void *data, struct wl_pointer *pointer,
 		if (size == 0)
 			size = 24;
 		struct wl_cursor_theme *cursor_theme = wl_cursor_theme_load(getenv("XCURSOR_THEME"), size * buffer_scale, shm);
-		cursor_image = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr")->images[0];
+		// TODO:
+		// cursor_image = wl_cursor_theme_get_cursor(cursor_theme, "pointer")->images[0];
+		cursor_image = wl_cursor_theme_get_cursor(cursor_theme, "default")->images[0];
 		cursor_surface = wl_compositor_create_surface(compositor);
 		wl_surface_set_buffer_scale(cursor_surface, buffer_scale);
 		wl_surface_attach(cursor_surface, wl_cursor_image_get_buffer(cursor_image), 0, 0);
@@ -631,6 +636,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		return;
 
 	uint32_t x = 0, i = 0;
+	x += TEXT_WIDTH("TODO", seat->bar->width - x, seat->bar->textpadding) / buffer_scale;
 	do {
 		if (hide_vacant) {
 			const bool active = seat->bar->mtags & 1 << i;
@@ -1096,9 +1102,6 @@ advance_word(char **beg, char **end)
 	return 0;
 }
 
-#define ADVANCE() advance_word(&wordbeg, &wordend)
-#define ADVANCE_IF_LAST_RET() if (ADVANCE() == -1) return
-
 static void
 set_top(Bar *bar)
 {
@@ -1331,7 +1334,8 @@ read_socket(void)
 	char *wordbeg, *wordend;
 	wordend = (char *)&sockbuf;
 
-	ADVANCE_IF_LAST_RET();
+	if (advance_word(&wordbeg, &wordend) == -1)
+		return;
 
 	Bar *bar = NULL, *it;
 	bool all = false;
@@ -1357,7 +1361,7 @@ read_socket(void)
 	if (!all && !bar)
 		return;
 
-	ADVANCE();
+	advance_word(&wordbeg, &wordend);
 
 	if (!strcmp(wordbeg, "status")) {
 		if (!*wordend)
