@@ -51,24 +51,25 @@
 
 #define PROGRAM "dwlb"
 #define VERSION "0.2"
-#define USAGE								\
-	"usage: dwlb [Command]\n"					\
-	"'all' will apply the command on all outputs, while 'selected' will\n" \
-    "apply to the current select output.\n"					\
-	"Commands\n"							\
-	"	-target-socket [SOCKET-NAME]	set the socket to send command to. Sockets can be found in `$XDG_RUNTIME_DIR/dwlb/`\n"\
-	"	-status	[OUTPUT] [TEXT]		set status text\n"	\
-	"	-status-stdin	[OUTPUT]		set status text from stdin\n"	\
-	"	-title	[OUTPUT] [TEXT]		set title text, if -custom-title is enabled\n"	\
-	"	-show [OUTPUT]			show bar\n"		\
-	"	-hide [OUTPUT]			hide bar\n"		\
-	"	-toggle-visibility [OUTPUT]	toggle bar visibility\n" \
-	"	-set-top [OUTPUT]		draw bar at the top\n"	\
-	"	-set-bottom [OUTPUT]		draw bar at the bottom\n" \
-	"	-toggle-location [OUTPUT]	toggle bar location\n"	\
-	"Other\n"							\
-	"	-v				get version information\n" \
-	"	-h				view this help text\n"
+static const char * const usage =
+	"usage: dwlb [Command]\n"
+	"'all' will apply the command on all outputs, while 'selected' will\n"
+    "apply to the current select output.\n"
+	"Commands\n"
+	"    -target-socket [SOCKET-NAME]    set the socket to send command to.\n"
+	"                                    Sockets can be found in `$XDG_RUNTIME_DIR/dwlb/`\n"
+	"    -status        [OUTPUT] [TEXT]  set status text\n"
+	"    -status-stdin  [OUTPUT]         set status text from stdin\n"
+	"    -title         [OUTPUT] [TEXT]  set title text, if -custom-title is enabled\n"
+	"    -show          [OUTPUT]         show bar\n"
+	"    -hide          [OUTPUT]         hide bar\n"
+	"    -toggle-visibility [OUTPUT]     toggle bar visibility\n"
+	"    -set-top       [OUTPUT]         draw bar at the top\n"
+	"    -set-bottom    [OUTPUT]         draw bar at the bottom\n"
+	"    -toggle-location [OUTPUT]       toggle bar location\n"
+	"Other\n"
+	"    -v                              get version information\n"
+	"    -h                              view this help text\n";
 
 #define TEXT_MAX 2048
 
@@ -1631,10 +1632,10 @@ main(int argc, char **argv)
 			fprintf(stderr, PROGRAM " " VERSION "\n");
 			return 0;
 		} else if (!strcmp(argv[i], "-h")) {
-			fprintf(stderr, USAGE);
+			fprintf(stderr, usage);
 			return 0;
 		} else {
-			die("Option '%s' not recognized\n" USAGE, argv[i]);
+			die("Option '%s' not recognized\n%s", argv[i], usage);
 		}
 	}
 
