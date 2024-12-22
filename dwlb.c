@@ -102,33 +102,38 @@ typedef struct {
 	struct zxdg_output_v1 *xdg_output;
 	struct zdwl_ipc_output_v2 *dwl_wm_output;
 
-	uint32_t registry_name;
-	char *xdg_output_name;
+	struct wl_list link;
 
-	bool configured;
+	char *xdg_output_name;
+	char *layout, *window_title;
+
+	uint32_t registry_name;
+
 	uint32_t width, height;
 	uint32_t textpadding;
 	uint32_t stride, bufsize;
 
 	uint32_t mtags, ctags, urg, sel;
-	char *layout, *window_title;
 	uint32_t layout_idx, last_layout_idx;
+
+	int shm_fd;
+
 	CustomText title, status;
 
+	bool configured;
 	bool hidden, bottom;
 	bool redraw;
-
-	struct wl_list link;
 } Bar;
 
 typedef struct {
 	struct wl_seat *wl_seat;
 	struct wl_pointer *wl_pointer;
-	uint32_t registry_name;
 
-	Bar *bar;
+	uint32_t registry_name;
 	uint32_t pointer_x, pointer_y;
 	uint32_t pointer_button;
+
+	Bar *bar;
 
 	struct wl_list link;
 } Seat;
@@ -196,31 +201,38 @@ static const struct wl_buffer_listener wl_buffer_listener = {
 
 /* Shared memory support function adapted from [wayland-book] */
 static int
-allocate_shm_file(size_t size)
+create_shm_file(void)
 {
 	int ret, fd;
 
 	fd = memfd_create("surface", MFD_CLOEXEC | MFD_ALLOW_SEALING);
 	if (fd == -1)
-		return -1;
+		die("memfd_create:");
 
+	// we can ignore errors this time because this is just an optimization
 	do {
 		ret = fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_SEAL);
 	} while (ret == -1 && errno == EINTR);
-	if (ret == -1) {
-		close(fd);
-		return -1;
-	}
-
-	do {
-		ret = ftruncate(fd, size);
-	} while (ret == -1 && errno == EINTR);
-	if (ret == -1) {
-		close(fd);
-		return -1;
-	}
 
 	return fd;
+}
+
+static void
+expand_shm_file(Bar* bar, size_t size)
+{
+	int ret;
+	if (size > bar->bufsize) {
+		do {
+			ret = ftruncate(bar->shm_fd, size);
+		} while (ret == -1 && errno == EINTR);
+
+		if (ret == -1) {
+			close(bar->shm_fd);
+			bar->shm_fd = -1;
+		} else { 
+			bar->bufsize = size;
+		}
+	}
 }
 
 static uint32_t
@@ -351,22 +363,14 @@ draw_text(char *text,
 static int
 draw_frame(Bar *bar)
 {
-	/* Allocate buffer to be attached to the surface */
-    int fd = allocate_shm_file(bar->bufsize);
-	if (fd == -1)
-		return -1;
+	uint32_t *data = mmap(NULL, bar->bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, bar->shm_fd, 0);
+	if (data == MAP_FAILED) 
+		die("shared memory mmap:");
 
-	uint32_t *data = mmap(NULL, bar->bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (data == MAP_FAILED) {
-		close(fd);
-		return -1;
-	}
-
-	struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, bar->bufsize);
+	struct wl_shm_pool *pool = wl_shm_create_pool(shm, bar->shm_fd, bar->bufsize);
 	struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, bar->width, bar->height, bar->stride, WL_SHM_FORMAT_ARGB8888);
 	wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
 	wl_shm_pool_destroy(pool);
-	close(fd);
 
 	/* Pixman image corresponding to main buffer */
 	pixman_image_t *final = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, data, bar->width * 4);
@@ -489,7 +493,7 @@ layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 	bar->width = w;
 	bar->height = h;
 	bar->stride = bar->width * 4;
-	bar->bufsize = bar->stride * bar->height;
+	expand_shm_file(bar, bar->stride * bar->height);
 	bar->configured = true;
 
 	draw_frame(bar);
@@ -976,6 +980,8 @@ setup_bar(Bar *bar)
 
 	if (!bar->hidden)
 		show_bar(bar);
+
+	bar->shm_fd = create_shm_file();
 }
 
 static void
@@ -1032,6 +1038,9 @@ teardown_bar(Bar *bar)
 	if (!bar->hidden) {
 		zwlr_layer_surface_v1_destroy(bar->layer_surface);
 		wl_surface_destroy(bar->wl_surface);
+	}
+	if (bar->shm_fd >= 0) {
+		close(bar->shm_fd);
 	}
 	zxdg_output_v1_destroy(bar->xdg_output);
 	wl_output_destroy(bar->wl_output);
