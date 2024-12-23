@@ -187,11 +187,11 @@ static void show_bar(Bar *bar);
 static void sig_handler(int sig);
 static void teardown_bar(Bar *bar);
 static void teardown_seat(Seat *seat);
+static void update_state(void);
 static uint32_t text_width(char const* text, uint32_t maxwidth, uint32_t padding);
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
 static int sock_fd;
-static char socketdir[256];
 static char *socketpath;
 static char sockbuf[4096];
 
@@ -216,6 +216,10 @@ static struct fcft_font *font;
 static uint32_t height, textpadding;
 
 static bool run_display;
+
+static struct {
+	struct tm *tm;
+} bar_state;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
 	.release = wl_buffer_release,
@@ -374,10 +378,8 @@ draw_frame(Bar *bar)
 	uint32_t boxs = font->height / 9;
 	uint32_t boxw = font->height / 6 + 2;
 
-	time_t t = time(NULL);
-	struct tm* tm = localtime(&t);
-	char buf[9];
-	snprintf(buf, 9, "%02d:%02d:%02d", tm->tm_hour, tm->tm_min, tm->tm_sec);
+	char buf[11];
+	snprintf(buf, 9, "%02d:%02d:%02d", bar_state.tm->tm_hour, bar_state.tm->tm_min, bar_state.tm->tm_sec);
 	x = draw_text(buf, x, y, foreground, background, &active_fg_color, &active_bg_color,
 			  bar->width, bar->height, bar->textpadding, NULL, 0);
 
@@ -417,8 +419,9 @@ draw_frame(Bar *bar)
 		      &inactive_fg_color, &inactive_bg_color, bar->width,
 		      bar->height, bar->textpadding, NULL, 0);
 
-	uint32_t status_width = text_width(bar->status.text, bar->width - x, bar->textpadding);
-	draw_text(bar->status.text, bar->width - status_width, y, foreground,
+	uint32_t status_width = text_width("00-00-0000", bar->width - x, bar->textpadding);
+	snprintf(buf, 11, "%02d-%02d-%04d", bar_state.tm->tm_mday, bar_state.tm->tm_mon + 1, bar_state.tm->tm_year + 1900);
+	draw_text(buf, bar->width - status_width, y, foreground,
 		  background, &inactive_fg_color, &inactive_bg_color,
 		  bar->width, bar->height, bar->textpadding,
 		  bar->status.colors, bar->status.colors_l);
@@ -759,9 +762,7 @@ event_loop(void)
 		Bar *bar;
 		if (fds[2].revents) {
 			read(tfd, buf, 8);
-			wl_list_for_each(bar, &bar_list, link) {
-				bar->redraw = true;
-			}
+			update_state();
 		}
 
 		wl_list_for_each(bar, &bar_list, link) {
@@ -1573,6 +1574,19 @@ teardown_seat(Seat *seat)
 	free(seat);
 }
 
+void
+update_state(void)
+{
+	Bar* bar;
+
+	time_t t = time(NULL);
+	bar_state.tm = localtime(&t); 
+
+	wl_list_for_each(bar, &bar_list, link) {
+		bar->redraw = true;
+	}
+}
+
 uint32_t text_width(char const* text, uint32_t maxwidth, uint32_t padding) {
 	return draw_text(text, 0, 0, NULL, NULL, NULL, NULL, maxwidth, 0, padding, NULL, 0);
 }
@@ -1587,7 +1601,7 @@ wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
 int
 main(int argc, char **argv)
 {
-	char *xdgruntimedir;
+	char *xdgruntimedir, socketdir[256];
 	struct sockaddr_un sock_address;
 	Bar *bar, *bar2;
 	Seat *seat, *seat2;
@@ -1620,6 +1634,8 @@ main(int argc, char **argv)
 
 	wl_list_init(&bar_list);
 	wl_list_init(&seat_list);
+	/* initialize state */
+	update_state();
 
 	struct wl_registry *registry = wl_display_get_registry(display);
 	wl_registry_add_listener(registry, &registry_listener, NULL);
