@@ -24,6 +24,7 @@
 #include <wayland-cursor.h>
 #include <wayland-util.h>
 
+#include "commands.h"
 #include "utf8.h"
 #include "xdg-shell-protocol.h"
 #include "xdg-output-unstable-v1-protocol.h"
@@ -128,7 +129,6 @@ typedef struct {
 	struct wl_list link;
 } Seat;
 
-static int advance_word(char **beg, char **end);
 static void copy_customtext(CustomText *from, CustomText *to);
 static int create_shm_file(void);
 static void die(const char *fmt, ...);
@@ -281,19 +281,6 @@ static const struct wl_registry_listener registry_listener = {
 
 
 #include "config.h"
-
-int
-advance_word(char **beg, char **end)
-{
-	for (*beg = *end; **beg == ' '; (*beg)++);
-	for (*end = *beg; **end && **end != ' '; (*end)++);
-	if (!**end)
-		/* last word */
-		return -1;
-	**end = '\0';
-	(*end)++;
-	return 0;
-}
 
 void
 copy_customtext(CustomText *from, CustomText *to)
@@ -1292,18 +1279,24 @@ read_socket(void)
 		return;
 	sockbuf[len] = '\0';
 
-	char *wordbeg, *wordend;
-	wordend = (char *)&sockbuf;
+	enum Command cmd = sockbuf[0];
 
-	if (advance_word(&wordbeg, &wordend) == -1)
-		return;
+	char *output = sockbuf + 1;
+	char *data = NULL;
+
+	for (ssize_t i = 0; output[i] != 0; ++i) {
+		if (output[i] == ' ') {
+			data = output + i + 1;
+			break;
+		}
+	}
 
 	Bar *bar = NULL, *it;
 	bool all = false;
 
-	if (!strcmp(wordbeg, "all")) {
+	if (!strcmp(output, "all")) {
 		all = true;
-	} else if (!strcmp(wordbeg, "selected")) {
+	} else if (!strcmp(output, "selected")) {
 		wl_list_for_each(it, &bar_list, link) {
 			if (it->sel) {
 				bar = it;
@@ -1312,7 +1305,7 @@ read_socket(void)
 		}
 	} else {
 		wl_list_for_each(it, &bar_list, link) {
-			if (it->xdg_output_name && !strcmp(wordbeg, it->xdg_output_name)) {
+			if (it->xdg_output_name && !strcmp(output, it->xdg_output_name)) {
 				bar = it;
 				break;
 			}
@@ -1322,10 +1315,9 @@ read_socket(void)
 	if (!all && !bar)
 		return;
 
-	advance_word(&wordbeg, &wordend);
-
-	if (!strcmp(wordbeg, "status")) {
-		if (!*wordend)
+	switch (cmd) {
+	case CommandStatus: {
+		if (!data)
 			return;
 		if (all) {
 			Bar *first = NULL;
@@ -1333,17 +1325,19 @@ read_socket(void)
 				if (first) {
 					copy_customtext(&first->status, &bar->status);
 				} else {
-					parse_into_customtext(&bar->status, wordend);
+					parse_into_customtext(&bar->status, data);
 					first = bar;
 				}
 				bar->redraw = true;
 			}
 		} else {
-			parse_into_customtext(&bar->status, wordend);
+			parse_into_customtext(&bar->status, data);
 			bar->redraw = true;
 		}
-	} else if (!strcmp(wordbeg, "title")) {
-		if (!custom_title || !*wordend)
+		break;
+	}
+	case CommandTitle: {
+		if (!custom_title || !data)
 			return;
 		if (all) {
 			Bar *first = NULL;
@@ -1351,16 +1345,18 @@ read_socket(void)
 				if (first) {
 					copy_customtext(&first->title, &bar->title);
 				} else {
-					parse_into_customtext(&bar->title, wordend);
+					parse_into_customtext(&bar->title, data);
 					first = bar;
 				}
 				bar->redraw = true;
 			}
 		} else {
-			parse_into_customtext(&bar->title, wordend);
+			parse_into_customtext(&bar->title, data);
 			bar->redraw = true;
 		}
-	} else if (!strcmp(wordbeg, "show")) {
+		break;
+	}
+	case CommandShow: {
 		if (all) {
 			wl_list_for_each(bar, &bar_list, link)
 				if (bar->hidden)
@@ -1369,7 +1365,9 @@ read_socket(void)
 			if (bar->hidden)
 				show_bar(bar);
 		}
-	} else if (!strcmp(wordbeg, "hide")) {
+		break;
+	}
+	case CommandHide: {
 		if (all) {
 			wl_list_for_each(bar, &bar_list, link)
 				if (!bar->hidden)
@@ -1378,7 +1376,9 @@ read_socket(void)
 			if (!bar->hidden)
 				hide_bar(bar);
 		}
-	} else if (!strcmp(wordbeg, "toggle-visibility")) {
+		break;
+	}
+	case CommandToggleVis: {
 		if (all) {
 			wl_list_for_each(bar, &bar_list, link)
 				if (bar->hidden)
@@ -1391,7 +1391,9 @@ read_socket(void)
 			else
 				hide_bar(bar);
 		}
-	} else if (!strcmp(wordbeg, "set-top")) {
+		break;
+	}
+	case CommandSetTop: {
 		if (all) {
 			wl_list_for_each(bar, &bar_list, link)
 				if (bar->bottom)
@@ -1400,7 +1402,9 @@ read_socket(void)
 			if (bar->bottom)
 				set_top(bar);
 		}
-	} else if (!strcmp(wordbeg, "set-bottom")) {
+		break;
+	}
+	case CommandSetBot: {
 		if (all) {
 			wl_list_for_each(bar, &bar_list, link)
 				if (!bar->bottom)
@@ -1409,7 +1413,9 @@ read_socket(void)
 			if (!bar->bottom)
 				set_bottom(bar);
 		}
-	} else if (!strcmp(wordbeg, "toggle-location")) {
+		break;
+	}
+	case CommandToggleLoc: {
 		if (all) {
 			wl_list_for_each(bar, &bar_list, link)
 				if (bar->bottom)
@@ -1422,7 +1428,9 @@ read_socket(void)
 			else
 				set_bottom(bar);
 		}
+		break;
 	}
+    }
 }
 
 void

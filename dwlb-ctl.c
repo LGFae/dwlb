@@ -8,6 +8,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "commands.h"
+
 #define TEXT_MAX 2048
 #define PROGRAM "dwlb-ctl"
 #define VERSION "0.1"
@@ -62,7 +64,7 @@ die(const char *fmt, ...)
 
 void
 client_send_command(struct sockaddr_un *sock_address, const char *output,
-		    const char *cmd, const char *data, const char *target_socket)
+		    enum Command cmd, const char *data, const char *target_socket)
 {
 	int sock_fd;
 	size_t len;
@@ -71,9 +73,9 @@ client_send_command(struct sockaddr_un *sock_address, const char *output,
 		die("Could not open directory '%s':", socketdir);
 
 	if (data)
-		len = snprintf(sockbuf, sizeof(sockbuf), "%s %s %s", output, cmd, data);
+		len = snprintf(sockbuf, sizeof(sockbuf), "%c%s %s", cmd, output, data);
 	else
-		len = snprintf(sockbuf, sizeof(sockbuf), "%s %s", output, cmd);
+		len = snprintf(sockbuf, sizeof(sockbuf), "%c%s", cmd, output);
 
 	struct dirent *de;
 	bool newfd = true;
@@ -130,55 +132,53 @@ main(int argc, char **argv)
 		target_socket = argv[2];
 		i += 2;
 	}
-	for (; i < argc; i++) {
-		if (!strcmp(argv[i], "-status")) {
-			if (++i + 1 >= argc)
-				die("Option -status requires two arguments");
-			client_send_command(&sock_address, argv[i], "status", argv[i + 1], target_socket);
-		} else if (!strcmp(argv[i], "-status-stdin")) {
-			if (++i >= argc)
-				die("Option -status-stdin requires an argument");
-			char *status = malloc(TEXT_MAX * sizeof(char));
-			while (fgets(status, TEXT_MAX-1, stdin)) {
-				status[strlen(status)-1] = '\0';
-				client_send_command(&sock_address, argv[i], "status", status, target_socket);
-			}
-			free(status);
-		} else if (!strcmp(argv[i], "-title")) {
-			if (++i + 1 >= argc)
-				die("Option -title requires two arguments");
-			client_send_command(&sock_address, argv[i], "title", argv[i + 1], target_socket);
-		} else if (!strcmp(argv[i], "-show")) {
-			if (++i >= argc)
-				die("Option -show requires an argument");
-			client_send_command(&sock_address, argv[i], "show", NULL, target_socket);
-		} else if (!strcmp(argv[i], "-hide")) {
-			if (++i >= argc)
-				die("Option -hide requires an argument");
-			client_send_command(&sock_address, argv[i], "hide", NULL, target_socket);
-		} else if (!strcmp(argv[i], "-toggle-visibility")) {
-			if (++i >= argc)
-				die("Option -toggle requires an argument");
-			client_send_command(&sock_address, argv[i], "toggle-visibility", NULL, target_socket);
-		} else if (!strcmp(argv[i], "-set-top")) {
-			if (++i >= argc)
-				die("Option -set-top requires an argument");
-			client_send_command(&sock_address, argv[i], "set-top", NULL, target_socket);
-		} else if (!strcmp(argv[i], "-set-bottom")) {
-			if (++i >= argc)
-				die("Option -set-bottom requires an argument");
-			client_send_command(&sock_address, argv[i], "set-bottom", NULL, target_socket);
-		} else if (!strcmp(argv[i], "-toggle-location")) {
-			if (++i >= argc)
-				die("Option -toggle-location requires an argument");
-			client_send_command(&sock_address, argv[i], "toggle-location", NULL, target_socket);
-		} else if (!strcmp(argv[i], "-v")) {
-			printf(PROGRAM " " VERSION "\n");
-		} else if (!strcmp(argv[i], "-h")) {
-			printf(usage);
-		} else {
-			die("Option '%s' not recognized\n%s", argv[i], usage);
+	if (!strcmp(argv[i], "-status")) {
+		if (++i + 1 >= argc)
+			die("Option -status requires two arguments");
+		client_send_command(&sock_address, argv[i], CommandStatus, argv[i + 1], target_socket);
+	} else if (!strcmp(argv[i], "-status-stdin")) {
+		if (++i >= argc)
+			die("Option -status-stdin requires an argument");
+		char *status = malloc(TEXT_MAX * sizeof(char));
+		while (fgets(status, TEXT_MAX-1, stdin)) {
+			status[strlen(status)-1] = '\0';
+			client_send_command(&sock_address, argv[i], CommandStatus, status, target_socket);
 		}
+		free(status);
+	} else if (!strcmp(argv[i], "-title")) {
+		if (++i + 1 >= argc)
+			die("Option -title requires two arguments");
+		client_send_command(&sock_address, argv[i], CommandTitle, argv[i + 1], target_socket);
+	} else if (!strcmp(argv[i], "-show")) {
+		if (++i >= argc)
+			die("Option -show requires an argument");
+		client_send_command(&sock_address, argv[i], CommandShow, NULL, target_socket);
+	} else if (!strcmp(argv[i], "-hide")) {
+		if (++i >= argc)
+			die("Option -hide requires an argument");
+		client_send_command(&sock_address, argv[i], CommandHide, NULL, target_socket);
+	} else if (!strcmp(argv[i], "-toggle-visibility")) {
+		if (++i >= argc)
+			die("Option -toggle requires an argument");
+		client_send_command(&sock_address, argv[i], CommandToggleVis, NULL, target_socket);
+	} else if (!strcmp(argv[i], "-set-top")) {
+		if (++i >= argc)
+			die("Option -set-top requires an argument");
+		client_send_command(&sock_address, argv[i], CommandSetTop, NULL, target_socket);
+	} else if (!strcmp(argv[i], "-set-bottom")) {
+		if (++i >= argc)
+			die("Option -set-bottom requires an argument");
+		client_send_command(&sock_address, argv[i], CommandSetBot, NULL, target_socket);
+	} else if (!strcmp(argv[i], "-toggle-location")) {
+		if (++i >= argc)
+			die("Option -toggle-location requires an argument");
+		client_send_command(&sock_address, argv[i], CommandToggleLoc, NULL, target_socket);
+	} else if (!strcmp(argv[i], "-v")) {
+		printf(PROGRAM " " VERSION "\n");
+	} else if (!strcmp(argv[i], "-h")) {
+		printf(usage);
+	} else {
+		die("Option '%s' not recognized\n%s", argv[i], usage);
 	}
 
 	return 0;
