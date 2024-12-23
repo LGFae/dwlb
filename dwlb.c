@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 #include <wayland-client.h>
 #include <wayland-cursor.h>
@@ -386,7 +387,11 @@ draw_frame(Bar *bar)
 	uint32_t boxs = font->height / 9;
 	uint32_t boxw = font->height / 6 + 2;
 
-	x = draw_text("TODO", x, y, foreground, background, &active_fg_color, &active_bg_color,
+	time_t t = time(NULL);
+	struct tm* tm = localtime(&t);
+	char buf[9];
+	snprintf(buf, 9, "%02d:%02d:%02d", tm->tm_hour, tm->tm_min, tm->tm_sec);
+	x = draw_text(buf, x, y, foreground, background, &active_fg_color, &active_bg_color,
 			  bar->width, bar->height, bar->textpadding, NULL, 0);
 
 	for (uint32_t i = 0; i < tags_l; i++) {
@@ -637,7 +642,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		return;
 
 	uint32_t x = 0, i = 0;
-	x += TEXT_WIDTH("TODO", seat->bar->width - x, seat->bar->textpadding) / buffer_scale;
+	x += TEXT_WIDTH("00:00:00", seat->bar->width - x, seat->bar->textpadding) / buffer_scale;
 	do {
 		if (hide_vacant) {
 			const bool active = seat->bar->mtags & 1 << i;
