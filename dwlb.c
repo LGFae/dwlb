@@ -15,6 +15,7 @@
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/timerfd.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
@@ -1477,14 +1478,23 @@ event_loop(void)
 {
 	int wl_fd = wl_display_get_fd(display);
 
-	struct pollfd fds[2] = {
+	int tfd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC);
+	struct itimerspec spec = {
+		{ 1, 0 },
+		{ 1, 0 },
+	};
+	timerfd_settime(tfd, 0, &spec, NULL);
+
+	struct pollfd fds[3] = {
 		{ .fd = wl_fd,   .events = POLLIN },
 		{ .fd = sock_fd, .events = POLLIN },
+		{ .fd = tfd,     .events = POLLIN },
 	};
+	char buf[8];
 	while (run_display) {
 		wl_display_flush(display);
 
-		if (poll(fds, 2, -1) == -1) {
+		if (poll(fds, 3, -1) == -1) {
 			if (errno == EINTR)
 				continue;
 			else
@@ -1500,6 +1510,13 @@ event_loop(void)
 			read_socket();
 
 		Bar *bar;
+		if (fds[2].revents) {
+			read(tfd, buf, 8);
+			wl_list_for_each(bar, &bar_list, link) {
+				bar->redraw = true;
+			}
+		}
+
 		wl_list_for_each(bar, &bar_list, link) {
 			if (bar->redraw) {
 				if (!bar->hidden)
