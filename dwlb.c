@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <sys/select.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -1477,25 +1477,26 @@ event_loop(void)
 {
 	int wl_fd = wl_display_get_fd(display);
 
+	struct pollfd fds[2] = {
+		{ .fd = wl_fd,   .events = POLLIN },
+		{ .fd = sock_fd, .events = POLLIN },
+	};
 	while (run_display) {
-		fd_set rfds;
-		FD_ZERO(&rfds);
-		FD_SET(wl_fd, &rfds);
-		FD_SET(sock_fd, &rfds);
-
 		wl_display_flush(display);
 
-		if (select(MAX(sock_fd, wl_fd) + 1, &rfds, NULL, NULL, NULL) == -1) {
+		if (poll(fds, 2, -1) == -1) {
 			if (errno == EINTR)
 				continue;
 			else
-				die("select:");
+				die("poll:");
 		}
 
-		if (FD_ISSET(wl_fd, &rfds))
+		if (fds[0].revents) {
 			if (wl_display_dispatch(display) == -1)
 				break;
-		if (FD_ISSET(sock_fd, &rfds))
+		}
+
+		if (fds[1].revents)
 			read_socket();
 
 		Bar *bar;
