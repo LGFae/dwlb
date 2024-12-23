@@ -1,4 +1,4 @@
-BINS = dwlb
+BINS = dwlb dwlb-ctl
 MANS = dwlb.1
 
 PREFIX ?= /usr/local
@@ -44,10 +44,14 @@ dwl-ipc-unstable-v2-protocol.c:
 dwl-ipc-unstable-v2-protocol.o: dwl-ipc-unstable-v2-protocol.h
 
 dwlb.o: utf8.h config.h xdg-shell-protocol.h xdg-output-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h dwl-ipc-unstable-v2-protocol.h
+dwlb-ctl.o: dwlb-ctl.c
 
 # Protocol dependencies
 dwlb: dwlb.o xdg-shell-protocol.o xdg-output-unstable-v1-protocol.o wlr-layer-shell-unstable-v1-protocol.o dwl-ipc-unstable-v2-protocol.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $(LDLIBS) -o $@ $^
+
+dwlb-ctl: dwlb-ctl.o
+	$(CC) $(CFLAGS) -o $@ $^
 
 # Library dependencies
 dwlb: CFLAGS+=$(shell pkg-config --cflags wayland-client wayland-cursor fcft pixman-1)
