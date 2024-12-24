@@ -131,6 +131,7 @@ typedef struct {
 
 static void copy_customtext(CustomText *from, CustomText *to);
 static int create_shm_file(void);
+static void cpu_stats_update(void);
 static void die(const char *fmt, ...);
 static int draw_frame(Bar *bar);
 static uint32_t draw_text(char const *text, uint32_t x, uint32_t y,
@@ -156,6 +157,7 @@ static void expand_shm_file(Bar* bar, size_t size);
 static void handle_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version);
 static void handle_global_remove(void *data, struct wl_registry *registry, uint32_t name);
 static void hide_bar(Bar *bar);
+static void init_state(void);
 static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface, uint32_t serial, uint32_t w, uint32_t h);
 static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
 static void output_description(void *data, struct zxdg_output_v1 *xdg_output, const char *description);
@@ -217,8 +219,13 @@ static uint32_t height, textpadding;
 
 static bool run_display;
 
+static int proc_stat_fd = 0;
+
 static struct {
 	struct tm *tm;
+	uint32_t cpu_prev_total;
+	uint32_t cpu_prev_idle;
+	uint32_t cpu_usage;
 } bar_state;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
@@ -319,6 +326,57 @@ create_shm_file(void)
 }
 
 void
+cpu_stats_update(void)
+{
+	lseek(proc_stat_fd, 5, SEEK_SET);
+	read(proc_stat_fd, sockbuf, 128);
+
+	ssize_t j = 0;
+	uint32_t total = 0;
+	uint32_t idle = 0;
+	for (ssize_t i = 0; i < 3; ++i) {
+		unsigned int x = 0;
+		while (sockbuf[j] != ' ') {
+			x *= 10;
+			x += sockbuf[j] - '0';
+			++j;
+		}
+		total += x;
+		++j;
+	}
+
+	for (ssize_t i = 0; i < 2; ++i) {
+		unsigned int x = 0;
+		while (sockbuf[j] != ' ') {
+			x *= 10;
+			x += sockbuf[j] - '0';
+			++j;
+		}
+		total += x;
+		idle += x;
+		++j;
+	}
+
+	for (ssize_t i = 0; i < 3; ++i) {
+		unsigned int x = 0;
+		while (sockbuf[j] != ' ') {
+			x *= 10;
+			x += sockbuf[j] - '0';
+			++j;
+		}
+		total += x;
+		++j;
+	}
+
+	uint32_t i = idle - bar_state.cpu_prev_idle;
+	uint32_t t = total - bar_state.cpu_prev_total + 1;
+
+	bar_state.cpu_usage = (100 * (t - i) + t / 2) / t;
+	bar_state.cpu_prev_idle = idle;
+	bar_state.cpu_prev_total = total;
+}
+
+void
 die(const char *fmt, ...)
 {
 	va_list ap;
@@ -365,8 +423,8 @@ draw_frame(Bar *bar)
 	uint32_t boxs = font->height / 9;
 	uint32_t boxw = font->height / 6 + 2;
 
-	char buf[11];
-	snprintf(buf, 9, "%02d:%02d:%02d", bar_state.tm->tm_hour, bar_state.tm->tm_min, bar_state.tm->tm_sec);
+	char buf[32];
+	snprintf(buf, 32, "%02d:%02d:%02d", bar_state.tm->tm_hour, bar_state.tm->tm_min, bar_state.tm->tm_sec);
 	x = draw_text(buf, x, y, foreground, background, &active_fg_color, &active_bg_color,
 			  bar->width, bar->height, bar->textpadding, NULL, 0);
 
@@ -406,8 +464,12 @@ draw_frame(Bar *bar)
 		      &inactive_fg_color, &inactive_bg_color, bar->width,
 		      bar->height, bar->textpadding, NULL, 0);
 
-	uint32_t status_width = text_width("00-00-0000", bar->width - x, bar->textpadding);
-	snprintf(buf, 11, "%02d-%02d-%04d", bar_state.tm->tm_mday, bar_state.tm->tm_mon + 1, bar_state.tm->tm_year + 1900);
+	uint32_t status_width = text_width("CPU 000% |00-00-0000", bar->width - x, bar->textpadding);
+	snprintf(buf, 32, "CPU %3d%% |%02d-%02d-%04d",
+			bar_state.cpu_usage,
+			bar_state.tm->tm_mday,
+			bar_state.tm->tm_mon + 1,
+			bar_state.tm->tm_year + 1900);
 	draw_text(buf, bar->width - status_width, y, foreground,
 		  background, &inactive_fg_color, &inactive_bg_color,
 		  bar->width, bar->height, bar->textpadding,
@@ -845,6 +907,18 @@ hide_bar(Bar *bar)
 
 	bar->configured = false;
 	bar->hidden = true;
+}
+
+void init_state(void)
+{
+	proc_stat_fd = open("/proc/stat", O_RDONLY, 0);
+
+	time_t t = time(NULL);
+	bar_state.tm = localtime(&t);
+
+	bar_state.cpu_usage = 0;
+	bar_state.cpu_prev_idle = 0;
+	bar_state.cpu_prev_total = 0;
 }
 
 /* Layer-surface setup adapted from layer-shell example in [wlroots] */
@@ -1588,7 +1662,9 @@ update_state(void)
 	Bar* bar;
 
 	time_t t = time(NULL);
-	bar_state.tm = localtime(&t); 
+	bar_state.tm = localtime(&t);
+
+	cpu_stats_update();
 
 	wl_list_for_each(bar, &bar_list, link) {
 		bar->redraw = true;
@@ -1643,7 +1719,7 @@ main(int argc, char **argv)
 	wl_list_init(&bar_list);
 	wl_list_init(&seat_list);
 	/* initialize state */
-	update_state();
+	init_state();
 
 	struct wl_registry *registry = wl_display_get_registry(display);
 	wl_registry_add_listener(registry, &registry_listener, NULL);
@@ -1708,6 +1784,7 @@ main(int argc, char **argv)
 
 	/* Clean everything up */
 	close(sock_fd);
+	close(proc_stat_fd);
 	unlink(socketpath);
 
 	if (tags) {
