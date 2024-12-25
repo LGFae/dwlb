@@ -193,7 +193,7 @@ static uint32_t text_width(char const* text, uint32_t maxwidth, uint32_t padding
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
 static int sock_fd;
-static char *socketpath;
+static char *socketpath = NULL;
 static char sockbuf[4096];
 
 static struct wl_display *display;
@@ -218,8 +218,7 @@ static uint32_t height, textpadding;
 
 static bool run_display;
 
-static int proc_stat_fd = 0;
-
+static int proc_stat_fd;
 static struct {
 	struct tm *tm;
 	uint32_t cpu_prev_total;
