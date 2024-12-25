@@ -1282,7 +1282,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, 2);
 	} else {
-		uint32_t status_x = (seat->bar->width - MIN(bar_state_width, seat->bar->width - x)) / buffer_scale;
+		uint32_t status_x = MAX(x, seat->bar->width - bar_state_width) / buffer_scale;
 		if (seat->pointer_x >= status_x) {
 			/* Clicked on status */
 			for (i = 0; i < seat->bar->status.buttons_l; i++) {
