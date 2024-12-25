@@ -25,7 +25,6 @@ static const char * const usage =
 	"                                    Sockets can be found in `$XDG_RUNTIME_DIR/dwlb/`\n"
 	"    -status        [OUTPUT] [TEXT]  set status text\n"
 	"    -status-stdin  [OUTPUT]         set status text from stdin\n"
-	"    -title         [OUTPUT] [TEXT]  set title text, if -custom-title is enabled\n"
 	"    -show          [OUTPUT]         show bar\n"
 	"    -hide          [OUTPUT]         hide bar\n"
 	"    -toggle-visibility [OUTPUT]     toggle bar visibility\n"
@@ -145,10 +144,6 @@ main(int argc, char **argv)
 			client_send_command(&sock_address, argv[i], CommandStatus, status, target_socket);
 		}
 		free(status);
-	} else if (!strcmp(argv[i], "-title")) {
-		if (++i + 1 >= argc)
-			die("Option -title requires two arguments");
-		client_send_command(&sock_address, argv[i], CommandTitle, argv[i + 1], target_socket);
 	} else if (!strcmp(argv[i], "-show")) {
 		if (++i >= argc)
 			die("Option -show requires an argument");

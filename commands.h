@@ -3,7 +3,6 @@
 
 enum Command {
 	CommandStatus = 1,
-	CommandTitle,
 	CommandShow,
 	CommandHide,
 	CommandToggleVis,

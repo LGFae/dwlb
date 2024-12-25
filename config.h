@@ -11,19 +11,16 @@ static const bool bottom = false;
 // hide vacant tags
 static const bool hide_vacant = false;
 // vertical pixel padding above and below text
-static const uint32_t vertical_padding = 1;
+static const uint32_t vertical_padding = 0;
 // allow in-line color commands in status text
 static const bool status_commands = true;
-// center title text
-static const bool center_title = false;
-// use title space as status text element
-static const bool custom_title = false;
-// title color use active colors
-static const bool active_color_title = true;
 // scale
 static const uint32_t buffer_scale = 1;
 // font
-static const char * const fontstr = "monospace:size=12";
+static const char * const fontstr[2] = {
+	"SourceCodePro:style=Semibold:size=13",
+	"Symbols Nerd Font:size=14"
+};
 // tag names
 static const char * const tags_names[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 

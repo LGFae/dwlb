@@ -476,12 +476,7 @@ draw_frame(Bar *bar)
 		  bar->status.colors, bar->status.colors_l);
 
 	uint32_t nx;
-	if (center_title) {
-		uint32_t title_width = text_width(custom_title ? bar->title.text : bar->window_title, bar->width - status_width - x, 0);
-		nx = MAX(x, MIN(((bar->width - title_width - x - status_width) / 2) + x, bar->width - status_width - title_width));
-	} else {
-		nx = MIN(x + bar->textpadding, bar->width - status_width);
-	}
+	nx = MIN(x + bar->textpadding, bar->width - status_width);
 	pixman_image_fill_boxes(PIXMAN_OP_SRC, background,
 				bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
 				&(pixman_box32_t){
@@ -490,13 +485,13 @@ draw_frame(Bar *bar)
 				});
 	x = nx;
 
-	x = draw_text(custom_title ? bar->title.text : bar->window_title,
-		      x, y, foreground, background,
-		      (bar->sel && active_color_title) ? &active_fg_color : &inactive_fg_color,
-		      (bar->sel && active_color_title) ? &active_bg_color : &inactive_bg_color,
-		      bar->width - status_width, bar->height, 0,
-		      custom_title ? bar->title.colors : NULL,
-		      custom_title ? bar->title.colors_l : 0);
+	x = draw_text(bar->window_title,
+			x, y, foreground, background,
+			bar->sel ? &active_fg_color : &inactive_fg_color,
+			bar->sel ? &active_bg_color : &inactive_bg_color,
+			bar->width - status_width, bar->height, 0,
+			NULL,
+			0);
 
 	pixman_image_fill_boxes(PIXMAN_OP_SRC, background,
 				bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
@@ -710,9 +705,6 @@ void
 dwl_wm_output_title(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
 	const char *title)
 {
-	if (custom_title)
-		return;
-
 	Bar *bar = (Bar *)data;
 
 	if (bar->window_title)
@@ -1285,25 +1277,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, 2);
 	} else {
 		uint32_t status_x = seat->bar->width / buffer_scale - text_width(seat->bar->status.text, seat->bar->width - x, seat->bar->textpadding) / buffer_scale;
-		if (seat->pointer_x < status_x) {
-			/* Clicked on title */
-			if (custom_title) {
-				if (center_title) {
-					uint32_t title_width = text_width(seat->bar->title.text, status_x - x, 0);
-					x = MAX(x, MIN((seat->bar->width - title_width) / 2, status_x - title_width));
-				} else {
-					x = MIN(x + seat->bar->textpadding, status_x);
-				}
-				for (i = 0; i < seat->bar->title.buttons_l; i++) {
-					if (seat->pointer_button == seat->bar->title.buttons[i].btn
-					    && seat->pointer_x >= x + seat->bar->title.buttons[i].x1
-					    && seat->pointer_x < x + seat->bar->title.buttons[i].x2) {
-						shell_command(seat->bar->title.buttons[i].command);
-						break;
-					}
-				}
-			}
-		} else {
+		if (seat->pointer_x >= status_x) {
 			/* Clicked on status */
 			for (i = 0; i < seat->bar->status.buttons_l; i++) {
 
@@ -1406,26 +1380,6 @@ read_socket(void)
 			}
 		} else {
 			parse_into_customtext(&bar->status, data);
-			bar->redraw = true;
-		}
-		break;
-	}
-	case CommandTitle: {
-		if (!custom_title || !data)
-			return;
-		if (all) {
-			Bar *first = NULL;
-			wl_list_for_each(bar, &bar_list, link) {
-				if (first) {
-					copy_customtext(&first->title, &bar->title);
-				} else {
-					parse_into_customtext(&bar->title, data);
-					first = bar;
-				}
-				bar->redraw = true;
-			}
-		} else {
-			parse_into_customtext(&bar->title, data);
 			bar->redraw = true;
 		}
 		break;
@@ -1734,7 +1688,7 @@ main(int argc, char **argv)
 	unsigned int dpi = 96 * buffer_scale;
 	char buf[10];
 	snprintf(buf, sizeof buf, "dpi=%u", dpi);
-	if (!(font = fcft_from_name(1, (const char *[]) {fontstr}, buf)))
+	if (!(font = fcft_from_name(1, fontstr, buf)))
 		die("Could not load font");
 	textpadding = font->height / 2;
 	height = font->height / buffer_scale + vertical_padding * 2;
