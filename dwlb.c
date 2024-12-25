@@ -101,7 +101,6 @@ typedef struct {
 	uint32_t registry_name;
 
 	uint32_t width, height;
-	uint32_t textpadding;
 	uint32_t stride, bufsize;
 
 	uint32_t mtags, ctags, urg, sel;
@@ -109,7 +108,7 @@ typedef struct {
 
 	int shm_fd;
 
-	CustomText title, status;
+	CustomText status;
 
 	bool configured;
 	bool hidden, bottom;
@@ -227,6 +226,7 @@ static struct {
 	uint32_t cpu_prev_idle;
 	uint32_t cpu_usage;
 } bar_state;
+static uint32_t bar_state_width;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
 	.release = wl_buffer_release,
@@ -426,7 +426,7 @@ draw_frame(Bar *bar)
 	char buf[32];
 	snprintf(buf, 32, "%02d:%02d:%02d", bar_state.tm->tm_hour, bar_state.tm->tm_min, bar_state.tm->tm_sec);
 	x = draw_text(buf, x, y, foreground, background, &active_fg_color, &active_bg_color,
-			  bar->width, bar->height, bar->textpadding, NULL, 0);
+			  bar->width, bar->height, textpadding, NULL, 0);
 
 	for (uint32_t i = 0; i < tags_l; i++) {
 		const bool active = bar->mtags & 1 << i;
@@ -457,26 +457,26 @@ draw_frame(Bar *bar)
 		}
 
 		x = draw_text(tags[i], x, y, foreground, background, fg_color, bg_color,
-			      bar->width, bar->height, bar->textpadding, NULL, 0);
+			      bar->width, bar->height, textpadding, NULL, 0);
 	}
 
 	x = draw_text(bar->layout, x, y, foreground, background,
 		      &inactive_fg_color, &inactive_bg_color, bar->width,
-		      bar->height, bar->textpadding, NULL, 0);
+		      bar->height, textpadding, NULL, 0);
 
-	uint32_t status_width = text_width("CPU 000% |00-00-0000", bar->width - x, bar->textpadding);
-	snprintf(buf, 32, "CPU %3d%% |%02d-%02d-%04d",
+	uint32_t status_width = MIN(bar->width - x, bar_state_width);
+	snprintf(buf, 32, "%3d%% | %02d-%02d-%04d",
 			bar_state.cpu_usage,
 			bar_state.tm->tm_mday,
 			bar_state.tm->tm_mon + 1,
 			bar_state.tm->tm_year + 1900);
 	draw_text(buf, bar->width - status_width, y, foreground,
 		  background, &inactive_fg_color, &inactive_bg_color,
-		  bar->width, bar->height, bar->textpadding,
+		  bar->width, bar->height, textpadding,
 		  bar->status.colors, bar->status.colors_l);
 
 	uint32_t nx;
-	nx = MIN(x + bar->textpadding, bar->width - status_width);
+	nx = MIN(x + textpadding, bar->width - status_width);
 	pixman_image_fill_boxes(PIXMAN_OP_SRC, background,
 				bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
 				&(pixman_box32_t){
@@ -911,6 +911,8 @@ void init_state(void)
 	bar_state.cpu_usage = 0;
 	bar_state.cpu_prev_idle = 0;
 	bar_state.cpu_prev_total = 0;
+
+	bar_state_width = text_width("000% | 00-00-0000", 0xFFFFFFFFu, textpadding);
 }
 
 /* Layer-surface setup adapted from layer-shell example in [wlroots] */
@@ -1163,13 +1165,13 @@ pointer_axis_discrete(void *data, struct wl_pointer *pointer,
 	if (!seat->bar)
 		return;
 
-	uint32_t status_x = seat->bar->width / buffer_scale - text_width(seat->bar->status.text, seat->bar->width, seat->bar->textpadding) / buffer_scale;
+	uint32_t status_x = seat->bar->width / buffer_scale - text_width(seat->bar->status.text, seat->bar->width, textpadding) / buffer_scale;
 	if (seat->pointer_x > status_x) {
 		/* Clicked on status */
 		for (i = 0; i < seat->bar->status.buttons_l; i++) {
 			if (btn == seat->bar->status.buttons[i].btn
-			    && seat->pointer_x >= status_x + seat->bar->textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
-			    && seat->pointer_x < status_x + seat->bar->textpadding + seat->bar->status.buttons[i].x2 / buffer_scale) {
+			    && seat->pointer_x >= status_x + textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
+			    && seat->pointer_x < status_x + textpadding + seat->bar->status.buttons[i].x2 / buffer_scale) {
 				shell_command(seat->bar->status.buttons[i].command);
 				break;
 			}
@@ -1249,7 +1251,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		return;
 
 	uint32_t x = 0, i = 0;
-	x += text_width("00:00:00", seat->bar->width - x, seat->bar->textpadding) / buffer_scale;
+	x += text_width("00:00:00", seat->bar->width - x, textpadding) / buffer_scale;
 	do {
 		if (hide_vacant) {
 			const bool active = seat->bar->mtags & 1 << i;
@@ -1258,7 +1260,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			if (!active && !occupied && !urgent)
 				continue;
 		}
-		x += text_width(tags[i], seat->bar->width - x, seat->bar->textpadding) / buffer_scale;
+		x += text_width(tags[i], seat->bar->width - x, textpadding) / buffer_scale;
 	} while (seat->pointer_x >= x && ++i < tags_l);
 
 	if (i < tags_l) {
@@ -1269,21 +1271,21 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, ~0, 1);
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, seat->bar->mtags ^ (1 << i), 0);
-	} else if (seat->pointer_x < (x += text_width(seat->bar->layout, seat->bar->width - x, seat->bar->textpadding))) {
+	} else if (seat->pointer_x < (x += text_width(seat->bar->layout, seat->bar->width - x, textpadding))) {
 		/* Clicked on layout */
 		if (seat->pointer_button == BTN_LEFT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, seat->bar->last_layout_idx);
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, 2);
 	} else {
-		uint32_t status_x = seat->bar->width / buffer_scale - text_width(seat->bar->status.text, seat->bar->width - x, seat->bar->textpadding) / buffer_scale;
+		uint32_t status_x = seat->bar->width / buffer_scale - text_width(seat->bar->status.text, seat->bar->width - x, textpadding) / buffer_scale;
 		if (seat->pointer_x >= status_x) {
 			/* Clicked on status */
 			for (i = 0; i < seat->bar->status.buttons_l; i++) {
 
 				if (seat->pointer_button == seat->bar->status.buttons[i].btn
-				    && seat->pointer_x >= status_x + seat->bar->textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
-				    && seat->pointer_x < status_x + seat->bar->textpadding + seat->bar->status.buttons[i].x2 / buffer_scale) {
+				    && seat->pointer_x >= status_x + textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
+				    && seat->pointer_x < status_x + textpadding + seat->bar->status.buttons[i].x2 / buffer_scale) {
 					shell_command(seat->bar->status.buttons[i].command);
 					break;
 				}
@@ -1486,7 +1488,6 @@ void
 setup_bar(Bar *bar)
 {
 	bar->height = height * buffer_scale;
-	bar->textpadding = textpadding;
 	bar->bottom = bottom;
 	bar->hidden = hidden;
 
@@ -1580,10 +1581,6 @@ teardown_bar(Bar *bar)
 		free(bar->status.colors);
 	if (bar->status.buttons)
 		free(bar->status.buttons);
-	if (bar->title.colors)
-		free(bar->title.colors);
-	if (bar->title.buttons)
-		free(bar->title.buttons);
 	if (bar->window_title)
 		free(bar->window_title);
 	zdwl_ipc_output_v2_destroy(bar->dwl_wm_output);
@@ -1672,8 +1669,6 @@ main(int argc, char **argv)
 
 	wl_list_init(&bar_list);
 	wl_list_init(&seat_list);
-	/* initialize state */
-	init_state();
 
 	struct wl_registry *registry = wl_display_get_registry(display);
 	wl_registry_add_listener(registry, &registry_listener, NULL);
@@ -1688,12 +1683,13 @@ main(int argc, char **argv)
 	unsigned int dpi = 96 * buffer_scale;
 	char buf[10];
 	snprintf(buf, sizeof buf, "dpi=%u", dpi);
-	if (!(font = fcft_from_name(1, fontstr, buf)))
+	if (!(font = fcft_from_name(fontcount, fontstr, buf)))
 		die("Could not load font");
-	textpadding = font->height / 2;
+	textpadding = (font->height * 2) / 5;
 	height = font->height / buffer_scale + vertical_padding * 2;
 
 	/* Setup bars */
+	init_state();
 	wl_list_for_each(bar, &bar_list, link)
 		setup_bar(bar);
 	wl_display_roundtrip(display);

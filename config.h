@@ -17,7 +17,8 @@ static const bool status_commands = true;
 // scale
 static const uint32_t buffer_scale = 1;
 // font
-static const char * const fontstr[2] = {
+static const size_t fontcount = 2;
+static const char *fontstr[2] = {
 	"SourceCodePro:style=Semibold:size=13",
 	"Symbols Nerd Font:size=14"
 };
