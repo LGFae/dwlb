@@ -22,6 +22,8 @@ static const char *fontstr[2] = {
 	"SourceCodePro:style=Semibold:size=13",
 	"Symbols Nerd Font:size=14"
 };
+static const char * const bar_time_fmt = "%02d:%02d:%02d";
+static const char * const bar_state_fmt = "%3d%% | %02d-%02d-%04d";
 // tag names
 static const char * const tags_names[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 

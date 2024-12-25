@@ -226,6 +226,7 @@ static struct {
 	uint32_t cpu_prev_idle;
 	uint32_t cpu_usage;
 } bar_state;
+static uint32_t bar_time_width;
 static uint32_t bar_state_width;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
@@ -424,7 +425,7 @@ draw_frame(Bar *bar)
 	uint32_t boxw = font->height / 6 + 2;
 
 	char buf[32];
-	snprintf(buf, 32, "%02d:%02d:%02d", bar_state.tm->tm_hour, bar_state.tm->tm_min, bar_state.tm->tm_sec);
+	snprintf(buf, 32, bar_time_fmt, bar_state.tm->tm_hour, bar_state.tm->tm_min, bar_state.tm->tm_sec);
 	x = draw_text(buf, x, y, foreground, background, &active_fg_color, &active_bg_color,
 			  bar->width, bar->height, textpadding, NULL, 0);
 
@@ -465,7 +466,7 @@ draw_frame(Bar *bar)
 		      bar->height, textpadding, NULL, 0);
 
 	uint32_t status_width = MIN(bar->width - x, bar_state_width);
-	snprintf(buf, 32, "%3d%% | %02d-%02d-%04d",
+	snprintf(buf, 32, bar_state_fmt,
 			bar_state.cpu_usage,
 			bar_state.tm->tm_mday,
 			bar_state.tm->tm_mon + 1,
@@ -912,7 +913,10 @@ void init_state(void)
 	bar_state.cpu_prev_idle = 0;
 	bar_state.cpu_prev_total = 0;
 
-	bar_state_width = text_width("000% | 00-00-0000", 0xFFFFFFFFu, textpadding);
+	snprintf(sockbuf, 4096, bar_state_fmt, 0, 0, 0, 0);
+	bar_state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	snprintf(sockbuf, 4096, bar_time_fmt, 0, 0, 0);
+	bar_time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 }
 
 /* Layer-surface setup adapted from layer-shell example in [wlroots] */
@@ -1251,7 +1255,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		return;
 
 	uint32_t x = 0, i = 0;
-	x += text_width("00:00:00", seat->bar->width - x, textpadding) / buffer_scale;
+	x += bar_time_width / buffer_scale;
 	do {
 		if (hide_vacant) {
 			const bool active = seat->bar->mtags & 1 << i;
@@ -1278,11 +1282,10 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, 2);
 	} else {
-		uint32_t status_x = seat->bar->width / buffer_scale - text_width(seat->bar->status.text, seat->bar->width - x, textpadding) / buffer_scale;
+		uint32_t status_x = (seat->bar->width - MIN(bar_state_width, seat->bar->width - x)) / buffer_scale;
 		if (seat->pointer_x >= status_x) {
 			/* Clicked on status */
 			for (i = 0; i < seat->bar->status.buttons_l; i++) {
-
 				if (seat->pointer_button == seat->bar->status.buttons[i].btn
 				    && seat->pointer_x >= status_x + textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
 				    && seat->pointer_x < status_x + textpadding + seat->bar->status.buttons[i].x2 / buffer_scale) {
