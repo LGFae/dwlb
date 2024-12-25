@@ -130,7 +130,6 @@ typedef struct {
 
 static void copy_customtext(CustomText *from, CustomText *to);
 static int create_shm_file(void);
-static void cpu_stats_update(void);
 static void die(const char *fmt, ...);
 static int draw_frame(Bar *bar);
 static uint32_t draw_text(char const *text, uint32_t x, uint32_t y,
@@ -156,7 +155,6 @@ static void expand_shm_file(Bar* bar, size_t size);
 static void handle_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version);
 static void handle_global_remove(void *data, struct wl_registry *registry, uint32_t name);
 static void hide_bar(Bar *bar);
-static void init_state(void);
 static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface, uint32_t serial, uint32_t w, uint32_t h);
 static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
 static void output_description(void *data, struct zxdg_output_v1 *xdg_output, const char *description);
@@ -186,9 +184,12 @@ static void set_bottom(Bar *bar);
 static void shell_command(char *command);
 static void show_bar(Bar *bar);
 static void sig_handler(int sig);
+static void stats_init(void);
+static void stats_update(void);
+static void stats_update_cpu(void);
+static void stats_update_mem(void);
 static void teardown_bar(Bar *bar);
 static void teardown_seat(Seat *seat);
-static void update_state(void);
 static uint32_t text_width(char const* text, uint32_t maxwidth, uint32_t padding);
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
@@ -219,12 +220,17 @@ static uint32_t height, textpadding;
 static bool run_display;
 
 static int proc_stat_fd;
+static int proc_meminfo_fd;
 static struct {
+	/* time and date */
 	struct tm *tm;
+	/* cpu */
 	uint32_t cpu_prev_total;
 	uint32_t cpu_prev_idle;
-	uint32_t cpu_usage;
-} bar_state;
+	uint8_t cpu_usage;
+	/* memory */
+	uint8_t mem_usage;
+} bar_stats;
 static uint32_t bar_time_width;
 static uint32_t bar_state_width;
 
@@ -326,57 +332,6 @@ create_shm_file(void)
 }
 
 void
-cpu_stats_update(void)
-{
-	lseek(proc_stat_fd, 5, SEEK_SET);
-	read(proc_stat_fd, sockbuf, 128);
-
-	ssize_t j = 0;
-	uint32_t total = 0;
-	uint32_t idle = 0;
-	for (ssize_t i = 0; i < 3; ++i) {
-		unsigned int x = 0;
-		while (sockbuf[j] != ' ') {
-			x *= 10;
-			x += sockbuf[j] - '0';
-			++j;
-		}
-		total += x;
-		++j;
-	}
-
-	for (ssize_t i = 0; i < 2; ++i) {
-		unsigned int x = 0;
-		while (sockbuf[j] != ' ') {
-			x *= 10;
-			x += sockbuf[j] - '0';
-			++j;
-		}
-		total += x;
-		idle += x;
-		++j;
-	}
-
-	for (ssize_t i = 0; i < 3; ++i) {
-		unsigned int x = 0;
-		while (sockbuf[j] != ' ') {
-			x *= 10;
-			x += sockbuf[j] - '0';
-			++j;
-		}
-		total += x;
-		++j;
-	}
-
-	uint32_t i = idle - bar_state.cpu_prev_idle;
-	uint32_t t = total - bar_state.cpu_prev_total + 1;
-
-	bar_state.cpu_usage = (100 * (t - i) + t / 2) / t;
-	bar_state.cpu_prev_idle = idle;
-	bar_state.cpu_prev_total = total;
-}
-
-void
 die(const char *fmt, ...)
 {
 	va_list ap;
@@ -424,7 +379,7 @@ draw_frame(Bar *bar)
 	uint32_t boxw = font->height / 6 + 2;
 
 	char buf[32];
-	snprintf(buf, 32, bar_time_fmt, bar_state.tm->tm_hour, bar_state.tm->tm_min, bar_state.tm->tm_sec);
+	snprintf(buf, 32, bar_time_fmt, bar_stats.tm->tm_hour, bar_stats.tm->tm_min, bar_stats.tm->tm_sec);
 	x = draw_text(buf, x, y, foreground, background, &active_fg_color, &active_bg_color,
 			  bar->width, bar->height, textpadding, NULL, 0);
 
@@ -466,10 +421,11 @@ draw_frame(Bar *bar)
 
 	uint32_t status_width = MIN(bar->width - x, bar_state_width);
 	snprintf(buf, 32, bar_state_fmt,
-			bar_state.cpu_usage,
-			bar_state.tm->tm_mday,
-			bar_state.tm->tm_mon + 1,
-			bar_state.tm->tm_year + 1900);
+			bar_stats.mem_usage,
+			bar_stats.cpu_usage,
+			bar_stats.tm->tm_mday,
+			bar_stats.tm->tm_mon + 1,
+			bar_stats.tm->tm_year + 1900);
 	draw_text(buf, bar->width - status_width, y, foreground,
 		  background, &inactive_fg_color, &inactive_bg_color,
 		  bar->width, bar->height, textpadding,
@@ -803,7 +759,7 @@ event_loop(void)
 		Bar *bar;
 		if (fds[2].revents) {
 			read(tfd, buf, 8);
-			update_state();
+			stats_update();
 		}
 
 		wl_list_for_each(bar, &bar_list, link) {
@@ -899,23 +855,6 @@ hide_bar(Bar *bar)
 
 	bar->configured = false;
 	bar->hidden = true;
-}
-
-void init_state(void)
-{
-	proc_stat_fd = open("/proc/stat", O_RDONLY, 0);
-
-	time_t t = time(NULL);
-	bar_state.tm = localtime(&t);
-
-	bar_state.cpu_usage = 0;
-	bar_state.cpu_prev_idle = 0;
-	bar_state.cpu_prev_total = 0;
-
-	snprintf(sockbuf, 4096, bar_state_fmt, 0, 0, 0, 0);
-	bar_state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
-	snprintf(sockbuf, 4096, bar_time_fmt, 0, 0, 0);
-	bar_time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 }
 
 /* Layer-surface setup adapted from layer-shell example in [wlroots] */
@@ -1576,6 +1515,121 @@ sig_handler(int sig)
 		run_display = false;
 }
 
+void stats_init(void)
+{
+	proc_stat_fd = open("/proc/stat", O_RDONLY, 0);
+	proc_meminfo_fd = open("/proc/meminfo", O_RDONLY, 0);
+
+	time_t t = time(NULL);
+	bar_stats.tm = localtime(&t);
+
+	bar_stats.cpu_usage = 0;
+	bar_stats.cpu_prev_idle = 0;
+	bar_stats.cpu_prev_total = 0;
+
+	bar_stats.mem_usage = 0;
+
+	snprintf(sockbuf, 4096, bar_state_fmt, 0, 0, 0, 0, 0);
+	bar_state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	snprintf(sockbuf, 4096, bar_time_fmt, 0, 0, 0);
+	bar_time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+}
+
+void
+stats_update(void)
+{
+	Bar* bar;
+
+	time_t t = time(NULL);
+	bar_stats.tm = localtime(&t);
+
+	stats_update_cpu();
+	stats_update_mem();
+
+	wl_list_for_each(bar, &bar_list, link) {
+		bar->redraw = true;
+	}
+}
+
+void
+stats_update_cpu(void)
+{
+	lseek(proc_stat_fd, 5, SEEK_SET);
+	read(proc_stat_fd, sockbuf, 128);
+
+	ssize_t j = 0;
+	uint32_t total = 0;
+	uint32_t idle = 0;
+	for (ssize_t i = 0; i < 3; ++i) {
+		unsigned int x = 0;
+		while (sockbuf[j] != ' ') {
+			x *= 10;
+			x += sockbuf[j] - '0';
+			++j;
+		}
+		total += x;
+		++j;
+	}
+
+	for (ssize_t i = 0; i < 2; ++i) {
+		unsigned int x = 0;
+		while (sockbuf[j] != ' ') {
+			x *= 10;
+			x += sockbuf[j] - '0';
+			++j;
+		}
+		total += x;
+		idle += x;
+		++j;
+	}
+
+	for (ssize_t i = 0; i < 3; ++i) {
+		unsigned int x = 0;
+		while (sockbuf[j] != ' ') {
+			x *= 10;
+			x += sockbuf[j] - '0';
+			++j;
+		}
+		total += x;
+		++j;
+	}
+
+	uint32_t i = idle - bar_stats.cpu_prev_idle;
+	uint32_t t = total - bar_stats.cpu_prev_total + 1;
+
+	bar_stats.cpu_usage = (100 * (t - i) + t / 2) / t;
+	bar_stats.cpu_prev_idle = idle;
+	bar_stats.cpu_prev_total = total;
+}
+
+void
+stats_update_mem(void)
+{
+	char *word, *cur;
+
+	lseek(proc_meminfo_fd, 10, SEEK_SET);
+	read(proc_meminfo_fd, sockbuf, 128);
+
+	cur = sockbuf;
+	while (*cur == ' ') ++cur;
+	word = cur;
+	while (*cur != ' ') ++cur;
+	*cur = 0;
+	uint32_t total = strtoul(word, NULL, 10);
+
+	while (*cur != '\n') ++cur;
+	++cur;
+	while (*cur != '\n') ++cur;
+	while (*cur != ' ') ++cur;
+	while (*cur == ' ') ++cur;
+	word = cur;
+	while (*cur != ' ') ++cur;
+	*cur = 0;
+	uint32_t available = strtoul(word, NULL, 10);
+
+	bar_stats.mem_usage = 100 - ((100 * available + total / 2) / total);
+}
+
 void
 teardown_bar(Bar *bar)
 {
@@ -1607,21 +1661,6 @@ teardown_seat(Seat *seat)
 		wl_pointer_destroy(seat->wl_pointer);
 	wl_seat_destroy(seat->wl_seat);
 	free(seat);
-}
-
-void
-update_state(void)
-{
-	Bar* bar;
-
-	time_t t = time(NULL);
-	bar_state.tm = localtime(&t);
-
-	cpu_stats_update();
-
-	wl_list_for_each(bar, &bar_list, link) {
-		bar->redraw = true;
-	}
 }
 
 uint32_t text_width(char const* text, uint32_t maxwidth, uint32_t padding) {
@@ -1691,7 +1730,7 @@ main(int argc, char **argv)
 	height = font->height / buffer_scale + vertical_padding * 2;
 
 	/* Setup bars */
-	init_state();
+	stats_init();
 	wl_list_for_each(bar, &bar_list, link)
 		setup_bar(bar);
 	wl_display_roundtrip(display);
@@ -1737,6 +1776,7 @@ main(int argc, char **argv)
 	/* Clean everything up */
 	close(sock_fd);
 	close(proc_stat_fd);
+	close(proc_meminfo_fd);
 	unlink(socketpath);
 
 	if (tags) {
