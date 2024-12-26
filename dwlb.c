@@ -530,8 +530,8 @@ draw_text(char const *text,
 
 	bool draw = canvas && bg_color && fg_color;
 
-	pixman_image_t *fg_fill;
-	pixman_color_t const *cur_bg_color;
+	pixman_image_t *fg_fill = NULL;
+	pixman_color_t const *cur_bg_color = NULL;
 	if (draw) {
 		fg_fill = pixman_image_create_solid_fill(fg_color);
 		cur_bg_color = bg_color;
