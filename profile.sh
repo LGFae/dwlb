@@ -2,4 +2,4 @@
 
 set -e
 
-CFLAGS="-O3 -march=native -pipe -flto=auto -g" make -j"$(nproc)"
+CFLAGS="-O3 -march=native -pipe -flto=auto -fno-inline -g" make -j"$(nproc)"
