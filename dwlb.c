@@ -66,6 +66,10 @@ static const char * const usage =
 enum { WheelUp, WheelDown };
 
 typedef struct {
+	char str[5]; // three digits, a suffix (b, k, m, g, t) and a 0-byte
+} IOPrint;
+
+typedef struct {
 	pixman_color_t color;
 	bool bg;
 	char *start;
@@ -175,6 +179,7 @@ static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t seria
 static void pointer_frame(void *data, struct wl_pointer *pointer);
 static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface);
 static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y);
+static IOPrint print_io(uint64_t io_value);
 static void read_socket(void);
 static void seat_capabilities(void *data, struct wl_seat *wl_seat, uint32_t capabilities);
 static void seat_name(void *data, struct wl_seat *wl_seat, const char *name);
@@ -187,6 +192,7 @@ static void sig_handler(int sig);
 static void stats_init(void);
 static void stats_update(void);
 static void stats_update_cpu(void);
+static void stats_update_disk(void);
 static void stats_update_gpu_temp(void);
 static void stats_update_mem(void);
 static void teardown_bar(Bar *bar);
@@ -232,6 +238,7 @@ static struct {
 
 	/* time and date */
 	struct tm tm;
+
 	/* cpu */
 	uint32_t cpu_prev_total;
 	uint32_t cpu_prev_idle;
@@ -241,6 +248,12 @@ static struct {
 
 	/* GPU temperature */
 	uint8_t gpu_temperature;
+
+	/* disk */
+	uint64_t prev_sectors_read;
+	uint64_t prev_sectors_written;
+	uint64_t cur_sectors_read;
+	uint64_t cur_sectors_written;
 } bar_stats;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
@@ -444,6 +457,8 @@ draw_frame(Bar *bar)
 
 	uint32_t status_width = MIN(bar->width - x, bar_stats.state_width);
 	snprintf(sockbuf, 1024, bar_state_fmt,
+			print_io((bar_stats.cur_sectors_read - bar_stats.prev_sectors_read) * 512).str,
+			print_io((bar_stats.cur_sectors_written - bar_stats.prev_sectors_written) * 512).str,
 			bar_stats.gpu_temperature,
 			bar_stats.cpu_usage,
 			bar_stats.mem_usage,
@@ -1282,6 +1297,23 @@ pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,
 	seat->pointer_y = wl_fixed_to_int(surface_y);
 }
 
+static IOPrint print_io(uint64_t io_value) {
+	IOPrint ret;
+
+	if (io_value < 1000)
+		snprintf(ret.str, 5,"%3lub", io_value);
+	else if (io_value < 1000000)
+		snprintf(ret.str, 5,"%3luk", io_value / 1000);
+	else if (io_value < 1000000000)
+		snprintf(ret.str, 5,"%3lum", io_value / 1000000);
+	else if  (io_value < 1000000000000)
+		snprintf(ret.str, 5,"%3lug", io_value / 1000000000);
+	else
+		snprintf(ret.str, 5,"%3lut", io_value / 1000000000000);
+
+	return ret;
+}
+
 void
 read_socket(void)
 {
@@ -1547,14 +1579,14 @@ void stats_init(void)
 	time_t t = time(NULL);
 	localtime_r(&t, &bar_stats.tm);
 
-	bar_stats.proc_stat_fd = open("/proc/stat", O_RDONLY, 0);
+	bar_stats.proc_stat_fd = open("/proc/stat", O_RDONLY | O_CLOEXEC, 0);
 	if (bar_stats.proc_stat_fd == -1)
 		die("failed to open /proc/stat:");
 	bar_stats.cpu_usage = 0;
 	bar_stats.cpu_prev_idle = 0;
 	bar_stats.cpu_prev_total = 0;
 
-	bar_stats.proc_meminfo_fd = open("/proc/meminfo", O_RDONLY, 0);
+	bar_stats.proc_meminfo_fd = open("/proc/meminfo", O_RDONLY | O_CLOEXEC, 0);
 	if (bar_stats.proc_meminfo_fd == -1)
 		die("failed to open /proc/meminfo:");
 	bar_stats.mem_usage = 0;
@@ -1572,7 +1604,7 @@ void stats_init(void)
 		read(fd, sockbuf, 1024);
 		if (!strncmp(sockbuf, "amdgpu", 6)) {
 			snprintf(sockbuf, 1024, "/sys/class/hwmon/%s/temp1_input", de->d_name);
-			int fd = open(sockbuf, O_RDONLY, 0);
+			int fd = open(sockbuf, O_RDONLY | O_CLOEXEC, 0);
 			if (fd != -1) {
 				bar_stats.gpu_hwmon_fd = fd;
 				break;
@@ -1585,9 +1617,14 @@ void stats_init(void)
 		die("failed to find amdgpu hwmon");
 	bar_stats.gpu_temperature = 0;
 
-	snprintf(sockbuf, 1024, bar_state_fmt, 0, 0, 0, 0, 0, 0);
+	bar_stats.prev_sectors_read = 0;
+	bar_stats.prev_sectors_written = 0;
+	bar_stats.cur_sectors_read = 0;
+	bar_stats.cur_sectors_written = 0;
+
+	snprintf(sockbuf, 1024, bar_state_fmt, "0", "0", '0', '0', '0', '0', '0', '0');
 	bar_stats.state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
-	snprintf(sockbuf, 1024, bar_time_fmt, 0, 0, 0);
+	snprintf(sockbuf, 1024, bar_time_fmt, '0', '0', '0');
 	bar_stats.time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 }
 
@@ -1600,12 +1637,12 @@ stats_update(void)
 	localtime_r(&t, &bar_stats.tm);
 
 	stats_update_cpu();
+	stats_update_disk();
 	stats_update_gpu_temp();
 	stats_update_mem();
 
-	wl_list_for_each(bar, &bar_list, link) {
+	wl_list_for_each(bar, &bar_list, link)
 		bar->redraw = true;
-	}
 }
 
 void
@@ -1657,6 +1694,55 @@ stats_update_cpu(void)
 	bar_stats.cpu_usage = (100 * (t - i) + t / 2) / t;
 	bar_stats.cpu_prev_idle = idle;
 	bar_stats.cpu_prev_total = total;
+}
+
+void stats_update_disk(void) {
+	bar_stats.prev_sectors_read = bar_stats.cur_sectors_read;
+	bar_stats.prev_sectors_written = bar_stats.cur_sectors_written;
+	DIR *dir;
+	if (!(dir = opendir("/sys/block")))
+		die("Could not open directory /sys/block:");
+	struct dirent *de;
+	while ((de = readdir(dir))) {
+		snprintf(sockbuf, 1024, "/sys/block/%s/stat", de->d_name);
+		int fd = open(sockbuf, O_RDONLY, 0);
+		if (fd == -1)
+			continue;
+		read(fd, sockbuf, 1024);
+		char *end, *cur = sockbuf;
+
+		// completed reads
+		while (*cur == ' ') ++cur;
+		while (*cur != ' ') ++cur;
+
+		// merged reads
+		while (*cur == ' ') ++cur;
+		while (*cur != ' ') ++cur;
+
+		// sectors reads
+		while (*cur == ' ') ++cur;
+		bar_stats.cur_sectors_read = strtoul(cur, &end, 10);
+		cur = end;
+
+		// milliseconds spent reading
+		while (*cur == ' ') ++cur;
+		while (*cur != ' ') ++cur;
+
+		// completed writes
+		while (*cur == ' ') ++cur;
+		while (*cur != ' ') ++cur;
+
+		// merged writes
+		while (*cur == ' ') ++cur;
+		while (*cur != ' ') ++cur;
+
+		// sectors writes
+		while (*cur == ' ') ++cur;
+		bar_stats.cur_sectors_written = strtoul(cur, &end, 10);
+
+		close(fd);
+	}
+	closedir(dir);
 }
 
 void
