@@ -1805,8 +1805,33 @@ teardown_seat(Seat *seat)
 	free(seat);
 }
 
-uint32_t text_width(char const* text, uint32_t maxwidth, uint32_t padding) {
-	return draw_text(text, 0, 0, NULL, NULL, NULL, maxwidth, 0, padding, NULL, 0);
+uint32_t text_width(char const* text, uint32_t max_x, uint32_t padding) {
+	if (!text || !*text || !max_x || ((padding * 2) >= max_x))
+		return 0;
+
+	uint32_t codepoint, x = padding, last_cp = 0, state = UTF8_ACCEPT;
+	for (char const *p = text; *p; p++) {
+		/* Returns nonzero if more bytes are needed */
+		if (utf8decode(&state, &codepoint, *p))
+			continue;
+
+		const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(font, codepoint, FCFT_SUBPIXEL_NONE);
+		if (!glyph)
+			continue;
+
+		long kern = 0;
+		if (last_cp)
+			fcft_kerning(font, last_cp, codepoint, &kern, NULL);
+		if ((x + kern + glyph->advance.x + padding) > max_x)
+			break;
+		x += kern + glyph->advance.x;
+		last_cp = codepoint;
+	}
+
+	if (!last_cp)
+		return 0;
+
+	return x + padding;
 }
 
 void
