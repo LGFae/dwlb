@@ -137,7 +137,7 @@ static int create_shm_file(void);
 static void die(const char *fmt, ...);
 static int draw_frame(Bar *bar);
 static uint32_t draw_text(char const *text, uint32_t x, uint32_t y,
-		pixman_image_t *foreground, pixman_image_t *background,
+		pixman_image_t *image,
 		pixman_color_t const *fg_color, pixman_color_t const *bg_color,
 		uint32_t max_x, uint32_t buf_height, uint32_t padding,
 	  	Color *colors, uint32_t colors_l);
@@ -387,9 +387,7 @@ draw_frame(Bar *bar)
 	wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
 	wl_shm_pool_destroy(pool);
 
-	/* Text background and foreground layers. The background layer is where we will draw */
-	pixman_image_t *foreground = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, NULL, bar->width * 4);
-	pixman_image_t *background = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, data, bar->width * 4);
+	pixman_image_t *canvas = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, data, bar->width * 4);
 
 	/* Draw on images */
 	uint32_t x = 0;
@@ -403,7 +401,7 @@ draw_frame(Bar *bar)
 			bar_stats.tm.tm_sec);
 	x = draw_text(sockbuf,
 			x, y,
-			foreground, background,
+			canvas,
 			&active_fg_color, &active_bg_color,
 			bar->width, bar->height, textpadding,
 			NULL, 0);
@@ -419,9 +417,16 @@ draw_frame(Bar *bar)
 		pixman_color_t const *fg_color = urgent ? &urgent_fg_color : (active ? &active_fg_color : (occupied ? &occupied_fg_color : &inactive_fg_color));
 		pixman_color_t const *bg_color = urgent ? &urgent_bg_color : (active ? &active_bg_color : (occupied ? &occupied_bg_color : &inactive_bg_color));
 
+		const uint32_t next_x = draw_text(tags[i],
+				x, y,
+				canvas,
+				fg_color, bg_color,
+				bar->width, bar->height, textpadding,
+				NULL, 0);
+
 		if (!hide_vacant && occupied) {
-			pixman_image_fill_boxes(PIXMAN_OP_SRC,
-					foreground, fg_color, 1,
+			pixman_image_fill_boxes(PIXMAN_OP_OVER,
+					canvas, fg_color, 1,
 					&(pixman_box32_t){
 						.x1 = x + boxs, .x2 = x + boxs + boxw,
 						.y1 = boxs, .y2 = boxs + boxw
@@ -429,25 +434,20 @@ draw_frame(Bar *bar)
 			if ((!bar->sel || !active) && boxw >= 3) {
 				/* Make box hollow */
 				pixman_image_fill_boxes(PIXMAN_OP_SRC,
-						foreground, &(pixman_color_t){ 0 }, 1,
+						canvas, bg_color, 1,
 						&(pixman_box32_t){
 							.x1 = x + boxs + 1, .x2 = x + boxs + boxw - 1,
 							.y1 = boxs + 1, .y2 = boxs + boxw - 1
 						});
 			}
 		}
-
-		x = draw_text(tags[i],
-				x, y,
-				foreground, background,
-				fg_color, bg_color,
-				bar->width, bar->height, textpadding,
-				NULL, 0);
+		
+		x = next_x;
 	}
 
 	x = draw_text(bar->layout,
 			x, y,
-			foreground, background,
+			canvas,
 			&inactive_fg_color, &inactive_bg_color,
 			bar->width, bar->height, textpadding,
 			NULL, 0);
@@ -464,14 +464,14 @@ draw_frame(Bar *bar)
 			bar_stats.tm.tm_year + 1900);
 	draw_text(sockbuf,
 			bar->width - status_width, y,
-			foreground, background,
+			canvas,
 			&inactive_fg_color, &inactive_bg_color,
 			bar->width, bar->height, textpadding,
 			bar->status.colors, bar->status.colors_l);
 
 	uint32_t nx;
 	nx = MIN(x + textpadding, bar->width - status_width);
-	pixman_image_fill_boxes(PIXMAN_OP_SRC, background,
+	pixman_image_fill_boxes(PIXMAN_OP_SRC, canvas,
 			bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
 			&(pixman_box32_t){
 				.x1 = x, .x2 = nx,
@@ -480,25 +480,21 @@ draw_frame(Bar *bar)
 	x = nx;
 	x = draw_text(bar->window_title,
 			x, y,
-			foreground, background,
+			canvas,
 			bar->sel ? &active_fg_color : &inactive_fg_color,
 			bar->sel ? &active_bg_color : &inactive_bg_color,
 			bar->width - status_width, bar->height, 0,
 			NULL,
 			0);
 
-	pixman_image_fill_boxes(PIXMAN_OP_SRC, background,
+	pixman_image_fill_boxes(PIXMAN_OP_SRC, canvas,
 			bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
 			&(pixman_box32_t){
 	    		.x1 = x, .x2 = bar->width - status_width,
 	    		.y1 = 0, .y2 = bar->height
     		});
 
-	/* Draw foreground on top of the background */
-	pixman_image_composite32(PIXMAN_OP_OVER, foreground, NULL, background, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
-
-	pixman_image_unref(foreground);
-	pixman_image_unref(background);
+	pixman_image_unref(canvas);
 
 	munmap(data, bar->bufsize);
 
@@ -514,8 +510,7 @@ uint32_t
 draw_text(char const *text,
 	  uint32_t x,
 	  uint32_t y,
-	  pixman_image_t *foreground,
-	  pixman_image_t *background,
+	  pixman_image_t *canvas,
 	  pixman_color_t const *fg_color,
 	  pixman_color_t const *bg_color,
 	  uint32_t max_x,
@@ -533,27 +528,27 @@ draw_text(char const *text,
 		return x;
 	x = nx;
 
-	bool draw_fg = foreground && fg_color;
-	bool draw_bg = background && bg_color;
+	bool draw = canvas && bg_color && fg_color;
 
 	pixman_image_t *fg_fill;
 	pixman_color_t const *cur_bg_color;
-	if (draw_fg)
+	if (draw) {
 		fg_fill = pixman_image_create_solid_fill(fg_color);
-	if (draw_bg)
 		cur_bg_color = bg_color;
+	}
 
 	uint32_t color_ind = 0, codepoint, state = UTF8_ACCEPT, last_cp = 0;
 	for (char const *p = text; *p; p++) {
 		/* Check for new colors */
-		if (state == UTF8_ACCEPT && colors && (draw_fg || draw_bg)) {
+		if (state == UTF8_ACCEPT && colors && draw) {
 			while (color_ind < colors_l && p == colors[color_ind].start) {
-				if (colors[color_ind].bg) {
-					if (draw_bg)
+				if (draw) {
+					if (colors[color_ind].bg) {
 						cur_bg_color = &colors[color_ind].color;
-				} else if (draw_fg) {
-					pixman_image_unref(fg_fill);
-					fg_fill = pixman_image_create_solid_fill(&colors[color_ind].color);
+					} else  {
+						pixman_image_unref(fg_fill);
+						fg_fill = pixman_image_create_solid_fill(&colors[color_ind].color);
+					}
 				}
 				color_ind++;
 			}
@@ -578,51 +573,49 @@ draw_text(char const *text,
 		last_cp = codepoint;
 		x += kern;
 
-		if (draw_fg) {
+		if (draw) {
+			pixman_image_fill_boxes(PIXMAN_OP_OVER, canvas,
+					cur_bg_color, 1, &(pixman_box32_t){
+						.x1 = x, .x2 = nx,
+						.y1 = 0, .y2 = buf_height
+					});
+
 			/* Detect and handle pre-rendered glyphs (e.g. emoji) */
 			if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
 				/* Only the alpha channel of the mask is used, so we can
 				 * use fgfill here to blend prerendered glyphs with the
 				 * same opacity */
 				pixman_image_composite32(
-					PIXMAN_OP_OVER, glyph->pix, fg_fill, foreground, 0, 0, 0, 0,
-					x + glyph->x, y - glyph->y, glyph->width, glyph->height);
+						PIXMAN_OP_OVER, glyph->pix, fg_fill, canvas, 0, 0, 0, 0,
+						x + glyph->x, y - glyph->y, glyph->width, glyph->height);
 			} else {
 				/* Applying the foreground color here would mess up
 				 * component alphas for subpixel-rendered text, so we
 				 * apply it when blending. */
 				pixman_image_composite32(
-					PIXMAN_OP_OVER, fg_fill, glyph->pix, foreground, 0, 0, 0, 0,
-					x + glyph->x, y - glyph->y, glyph->width, glyph->height);
+						PIXMAN_OP_OVER, fg_fill, glyph->pix, canvas, 0, 0, 0, 0,
+						x + glyph->x, y - glyph->y, glyph->width, glyph->height);
 			}
-		}
-
-		if (draw_bg) {
-			pixman_image_fill_boxes(PIXMAN_OP_OVER, background,
-						cur_bg_color, 1, &(pixman_box32_t){
-							.x1 = x, .x2 = nx,
-							.y1 = 0, .y2 = buf_height
-						});
 		}
 
 		/* increment pen position */
 		x = nx;
 	}
 
-	if (draw_fg)
+	if (draw)
 		pixman_image_unref(fg_fill);
 	if (!last_cp)
 		return ix;
 
 	nx = x + padding;
-	if (draw_bg) {
+	if (draw) {
 		/* Fill padding background */
-		pixman_image_fill_boxes(PIXMAN_OP_OVER, background,
+		pixman_image_fill_boxes(PIXMAN_OP_OVER, canvas,
 					bg_color, 1, &(pixman_box32_t){
 						.x1 = ix, .x2 = ix + padding,
 						.y1 = 0, .y2 = buf_height
 					});
-		pixman_image_fill_boxes(PIXMAN_OP_OVER, background,
+		pixman_image_fill_boxes(PIXMAN_OP_OVER, canvas,
 					bg_color, 1, &(pixman_box32_t){
 						.x1 = x, .x2 = nx,
 						.y1 = 0, .y2 = buf_height
@@ -1813,7 +1806,7 @@ teardown_seat(Seat *seat)
 }
 
 uint32_t text_width(char const* text, uint32_t maxwidth, uint32_t padding) {
-	return draw_text(text, 0, 0, NULL, NULL, NULL, NULL, maxwidth, 0, padding, NULL, 0);
+	return draw_text(text, 0, 0, NULL, NULL, NULL, maxwidth, 0, padding, NULL, 0);
 }
 
 void
