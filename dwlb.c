@@ -378,10 +378,16 @@ draw_frame(Bar *bar)
 	uint32_t boxs = font->height / 9;
 	uint32_t boxw = font->height / 6 + 2;
 
-	char buf[32];
-	snprintf(buf, 32, bar_time_fmt, bar_stats.tm->tm_hour, bar_stats.tm->tm_min, bar_stats.tm->tm_sec);
-	x = draw_text(buf, x, y, foreground, background, &active_fg_color, &active_bg_color,
-			  bar->width, bar->height, textpadding, NULL, 0);
+	snprintf(sockbuf, 4096, bar_time_fmt,
+			bar_stats.tm->tm_hour,
+			bar_stats.tm->tm_min,
+			bar_stats.tm->tm_sec);
+	x = draw_text(sockbuf,
+			x, y,
+			foreground, background,
+			&active_fg_color, &active_bg_color,
+			bar->width, bar->height, textpadding,
+			NULL, 0);
 
 	for (uint32_t i = 0; i < tags_l; i++) {
 		const bool active = bar->mtags & 1 << i;
@@ -395,54 +401,64 @@ draw_frame(Bar *bar)
 		pixman_color_t const *bg_color = urgent ? &urgent_bg_color : (active ? &active_bg_color : (occupied ? &occupied_bg_color : &inactive_bg_color));
 
 		if (!hide_vacant && occupied) {
-			pixman_image_fill_boxes(PIXMAN_OP_SRC, foreground,
-						fg_color, 1, &(pixman_box32_t){
-							.x1 = x + boxs, .x2 = x + boxs + boxw,
-							.y1 = boxs, .y2 = boxs + boxw
-						});
+			pixman_image_fill_boxes(PIXMAN_OP_SRC,
+					foreground, fg_color, 1,
+					&(pixman_box32_t){
+						.x1 = x + boxs, .x2 = x + boxs + boxw,
+						.y1 = boxs, .y2 = boxs + boxw
+					});
 			if ((!bar->sel || !active) && boxw >= 3) {
 				/* Make box hollow */
-				pixman_image_fill_boxes(PIXMAN_OP_SRC, foreground,
-							&(pixman_color_t){ 0 },
-							1, &(pixman_box32_t){
-								.x1 = x + boxs + 1, .x2 = x + boxs + boxw - 1,
-								.y1 = boxs + 1, .y2 = boxs + boxw - 1
-							});
+				pixman_image_fill_boxes(PIXMAN_OP_SRC,
+						foreground, &(pixman_color_t){ 0 }, 1,
+						&(pixman_box32_t){
+							.x1 = x + boxs + 1, .x2 = x + boxs + boxw - 1,
+							.y1 = boxs + 1, .y2 = boxs + boxw - 1
+						});
 			}
 		}
 
-		x = draw_text(tags[i], x, y, foreground, background, fg_color, bg_color,
-			      bar->width, bar->height, textpadding, NULL, 0);
+		x = draw_text(tags[i],
+				x, y,
+				foreground, background,
+				fg_color, bg_color,
+				bar->width, bar->height, textpadding,
+				NULL, 0);
 	}
 
-	x = draw_text(bar->layout, x, y, foreground, background,
-		      &inactive_fg_color, &inactive_bg_color, bar->width,
-		      bar->height, textpadding, NULL, 0);
+	x = draw_text(bar->layout,
+			x, y,
+			foreground, background,
+			&inactive_fg_color, &inactive_bg_color,
+			bar->width, bar->height, textpadding,
+			NULL, 0);
 
 	uint32_t status_width = MIN(bar->width - x, bar_state_width);
-	snprintf(buf, 32, bar_state_fmt,
-			bar_stats.mem_usage,
+	snprintf(sockbuf, 4096, bar_state_fmt,
 			bar_stats.cpu_usage,
+			bar_stats.mem_usage,
 			bar_stats.tm->tm_mday,
 			bar_stats.tm->tm_mon + 1,
 			bar_stats.tm->tm_year + 1900);
-	draw_text(buf, bar->width - status_width, y, foreground,
-		  background, &inactive_fg_color, &inactive_bg_color,
-		  bar->width, bar->height, textpadding,
-		  bar->status.colors, bar->status.colors_l);
+	draw_text(sockbuf,
+			bar->width - status_width, y,
+			foreground, background,
+			&inactive_fg_color, &inactive_bg_color,
+			bar->width, bar->height, textpadding,
+			bar->status.colors, bar->status.colors_l);
 
 	uint32_t nx;
 	nx = MIN(x + textpadding, bar->width - status_width);
 	pixman_image_fill_boxes(PIXMAN_OP_SRC, background,
-				bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
-				&(pixman_box32_t){
-					.x1 = x, .x2 = nx,
-					.y1 = 0, .y2 = bar->height
-				});
+			bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
+			&(pixman_box32_t){
+				.x1 = x, .x2 = nx,
+				.y1 = 0, .y2 = bar->height
+			});
 	x = nx;
-
 	x = draw_text(bar->window_title,
-			x, y, foreground, background,
+			x, y,
+			foreground, background,
 			bar->sel ? &active_fg_color : &inactive_fg_color,
 			bar->sel ? &active_bg_color : &inactive_bg_color,
 			bar->width - status_width, bar->height, 0,
@@ -450,11 +466,11 @@ draw_frame(Bar *bar)
 			0);
 
 	pixman_image_fill_boxes(PIXMAN_OP_SRC, background,
-				bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
-				&(pixman_box32_t){
-					.x1 = x, .x2 = bar->width - status_width,
-					.y1 = 0, .y2 = bar->height
-				});
+			bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
+			&(pixman_box32_t){
+	    		.x1 = x, .x2 = bar->width - status_width,
+	    		.y1 = 0, .y2 = bar->height
+    		});
 
 	/* Draw background and foreground on bar */
 	pixman_image_composite32(PIXMAN_OP_OVER, background, NULL, final, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
