@@ -387,12 +387,9 @@ draw_frame(Bar *bar)
 	wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
 	wl_shm_pool_destroy(pool);
 
-	/* Pixman image corresponding to main buffer */
-	pixman_image_t *final = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, data, bar->width * 4);
-
-	/* Text background and foreground layers */
+	/* Text background and foreground layers. The background layer is where we will draw */
 	pixman_image_t *foreground = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, NULL, bar->width * 4);
-	pixman_image_t *background = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, NULL, bar->width * 4);
+	pixman_image_t *background = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, data, bar->width * 4);
 
 	/* Draw on images */
 	uint32_t x = 0;
@@ -497,13 +494,11 @@ draw_frame(Bar *bar)
 	    		.y1 = 0, .y2 = bar->height
     		});
 
-	/* Draw background and foreground on bar */
-	pixman_image_composite32(PIXMAN_OP_OVER, background, NULL, final, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
-	pixman_image_composite32(PIXMAN_OP_OVER, foreground, NULL, final, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
+	/* Draw foreground on top of the background */
+	pixman_image_composite32(PIXMAN_OP_OVER, foreground, NULL, background, 0, 0, 0, 0, 0, 0, bar->width, bar->height);
 
 	pixman_image_unref(foreground);
 	pixman_image_unref(background);
-	pixman_image_unref(final);
 
 	munmap(data, bar->bufsize);
 
