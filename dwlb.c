@@ -195,7 +195,7 @@ static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
 static int sock_fd;
 static char *socketpath = NULL;
-static char sockbuf[4096];
+static char sockbuf[1024];
 
 static struct wl_display *display;
 static struct wl_compositor *compositor;
@@ -378,7 +378,7 @@ draw_frame(Bar *bar)
 	uint32_t boxs = font->height / 9;
 	uint32_t boxw = font->height / 6 + 2;
 
-	snprintf(sockbuf, 4096, bar_time_fmt,
+	snprintf(sockbuf, 1024, bar_time_fmt,
 			bar_stats.tm->tm_hour,
 			bar_stats.tm->tm_min,
 			bar_stats.tm->tm_sec);
@@ -434,7 +434,7 @@ draw_frame(Bar *bar)
 			NULL, 0);
 
 	uint32_t status_width = MIN(bar->width - x, bar_state_width);
-	snprintf(sockbuf, 4096, bar_state_fmt,
+	snprintf(sockbuf, 1024, bar_state_fmt,
 			bar_stats.cpu_usage,
 			bar_stats.mem_usage,
 			bar_stats.tm->tm_mday,
@@ -1545,9 +1545,9 @@ void stats_init(void)
 
 	bar_stats.mem_usage = 0;
 
-	snprintf(sockbuf, 4096, bar_state_fmt, 0, 0, 0, 0, 0);
+	snprintf(sockbuf, 1024, bar_state_fmt, 0, 0, 0, 0, 0);
 	bar_state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
-	snprintf(sockbuf, 4096, bar_time_fmt, 0, 0, 0);
+	snprintf(sockbuf, 1024, bar_time_fmt, 0, 0, 0);
 	bar_time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 }
 
@@ -1738,9 +1738,8 @@ main(int argc, char **argv)
 	fcft_set_scaling_filter(FCFT_SCALING_FILTER_LANCZOS3);
 
 	unsigned int dpi = 96 * buffer_scale;
-	char buf[10];
-	snprintf(buf, sizeof buf, "dpi=%u", dpi);
-	if (!(font = fcft_from_name(fontcount, fontstr, buf)))
+	snprintf(sockbuf, 1024, "dpi=%u", dpi);
+	if (!(font = fcft_from_name(fontcount, fontstr, sockbuf)))
 		die("Could not load font");
 	textpadding = (font->height * 2) / 5;
 	height = font->height / buffer_scale + vertical_padding * 2;
