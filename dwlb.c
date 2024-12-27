@@ -195,6 +195,7 @@ static void stats_update_cpu(void);
 static void stats_update_disk(void);
 static void stats_update_gpu_temp(void);
 static void stats_update_mem(void);
+static void stats_update_network(void);
 static void teardown_bar(Bar *bar);
 static void teardown_seat(Seat *seat);
 static uint32_t text_width(char const* text, uint32_t maxwidth, uint32_t padding);
@@ -235,6 +236,8 @@ static struct {
 	int proc_stat_fd;
 	int proc_meminfo_fd;
 	int gpu_hwmon_fd;
+	int net_rx_bytes_fd;
+	int net_tx_bytes_fd;
 
 	/* time and date */
 	struct tm tm;
@@ -243,6 +246,7 @@ static struct {
 	uint32_t cpu_prev_total;
 	uint32_t cpu_prev_idle;
 	uint8_t  cpu_usage;
+
 	/* memory */
 	uint8_t mem_usage;
 
@@ -254,6 +258,12 @@ static struct {
 	uint64_t prev_sectors_written;
 	uint64_t cur_sectors_read;
 	uint64_t cur_sectors_written;
+
+	/* network */
+	uint64_t prev_rx_bytes;
+	uint64_t prev_tx_bytes;
+	uint64_t cur_rx_bytes;
+	uint64_t cur_tx_bytes;
 } stats;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
@@ -454,6 +464,8 @@ draw_frame(Bar *bar)
 
 	uint32_t status_width = MIN(bar->width - x, stats.state_width);
 	snprintf(sockbuf, 1024, bar_state_fmt,
+			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
+			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
 			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
 			print_io((stats.cur_sectors_written - stats.prev_sectors_written) * 512).str,
 			stats.gpu_temperature,
@@ -1612,7 +1624,22 @@ void stats_init(void)
 	stats.cur_sectors_read = 0;
 	stats.cur_sectors_written = 0;
 
-	snprintf(sockbuf, 1024, bar_state_fmt, "0", "0", '0', '0', '0', '0', '0', '0');
+	stats.net_rx_bytes_fd =
+		open("/sys/class/net/" NET_INTERFACE_NAME "/statistics/rx_bytes", O_RDONLY | O_CLOEXEC, 0);
+	if (stats.net_rx_bytes_fd == -1)
+		die("failed to open" "/sys/class/net/" NET_INTERFACE_NAME "/statistics/rx_bytes:");
+
+	stats.net_tx_bytes_fd =
+		open("/sys/class/net/" NET_INTERFACE_NAME "/statistics/tx_bytes", O_RDONLY | O_CLOEXEC, 0);
+	if (stats.net_tx_bytes_fd == -1)
+		die("failed to open" "/sys/class/net/" NET_INTERFACE_NAME "/statistics/tx_bytes:");
+
+	stats.prev_rx_bytes = 0;
+	stats.prev_tx_bytes = 0;
+	stats.cur_rx_bytes = 0;
+	stats.cur_tx_bytes = 0;
+
+	snprintf(sockbuf, 1024, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0', '0', '0', '0');
 	stats.state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 	snprintf(sockbuf, 1024, bar_time_fmt, '0', '0', '0');
 	stats.time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
@@ -1622,14 +1649,16 @@ void
 stats_update(void)
 {
 	Bar* bar;
+	time_t t;
 
-	time_t t = time(NULL);
+	t = time(NULL);
 	localtime_r(&t, &stats.tm);
 
 	stats_update_cpu();
 	stats_update_disk();
 	stats_update_gpu_temp();
 	stats_update_mem();
+	stats_update_network();
 
 	wl_list_for_each(bar, &bar_list, link)
 		bar->redraw = true;
@@ -1770,6 +1799,21 @@ stats_update_mem(void)
 	uint32_t available = strtoul(word, NULL, 10);
 
 	stats.mem_usage = 100 - ((100 * available + total / 2) / total);
+}
+
+void
+stats_update_network(void)
+{
+	stats.prev_rx_bytes = stats.cur_rx_bytes;
+	stats.prev_tx_bytes = stats.cur_tx_bytes;
+
+	lseek(stats.net_rx_bytes_fd, 0, SEEK_SET);
+	read(stats.net_rx_bytes_fd, sockbuf, 128);
+	stats.cur_rx_bytes = strtoul(sockbuf, NULL, 10);
+
+	lseek(stats.net_tx_bytes_fd, 0, SEEK_SET);
+	read(stats.net_tx_bytes_fd, sockbuf, 128);
+	stats.cur_tx_bytes = strtoul(sockbuf, NULL, 10);
 }
 
 void
@@ -1944,6 +1988,8 @@ main(int argc, char **argv)
 	close(stats.proc_stat_fd);
 	close(stats.proc_meminfo_fd);
 	close(stats.gpu_hwmon_fd);
+	close(stats.net_rx_bytes_fd);
+	close(stats.net_tx_bytes_fd);
 	unlink(socketpath);
 
 	if (tags) {
