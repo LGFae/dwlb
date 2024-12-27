@@ -242,7 +242,7 @@ static struct {
 	/* cpu */
 	uint32_t cpu_prev_total;
 	uint32_t cpu_prev_idle;
-	uint8_t cpu_usage;
+	uint8_t  cpu_usage;
 	/* memory */
 	uint8_t mem_usage;
 
@@ -254,7 +254,7 @@ static struct {
 	uint64_t prev_sectors_written;
 	uint64_t cur_sectors_read;
 	uint64_t cur_sectors_written;
-} bar_stats;
+} stats;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
 	.release = wl_buffer_release,
@@ -396,9 +396,9 @@ draw_frame(Bar *bar)
 	uint32_t boxw = font->height / 6 + 2;
 
 	snprintf(sockbuf, 1024, bar_time_fmt,
-			bar_stats.tm.tm_hour,
-			bar_stats.tm.tm_min,
-			bar_stats.tm.tm_sec);
+			stats.tm.tm_hour,
+			stats.tm.tm_min,
+			stats.tm.tm_sec);
 	x = draw_text(sockbuf,
 			x, y,
 			canvas,
@@ -452,16 +452,16 @@ draw_frame(Bar *bar)
 			bar->width, bar->height, textpadding,
 			NULL, 0);
 
-	uint32_t status_width = MIN(bar->width - x, bar_stats.state_width);
+	uint32_t status_width = MIN(bar->width - x, stats.state_width);
 	snprintf(sockbuf, 1024, bar_state_fmt,
-			print_io((bar_stats.cur_sectors_read - bar_stats.prev_sectors_read) * 512).str,
-			print_io((bar_stats.cur_sectors_written - bar_stats.prev_sectors_written) * 512).str,
-			bar_stats.gpu_temperature,
-			bar_stats.cpu_usage,
-			bar_stats.mem_usage,
-			bar_stats.tm.tm_mday,
-			bar_stats.tm.tm_mon + 1,
-			bar_stats.tm.tm_year + 1900);
+			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
+			print_io((stats.cur_sectors_written - stats.prev_sectors_written) * 512).str,
+			stats.gpu_temperature,
+			stats.cpu_usage,
+			stats.mem_usage,
+			stats.tm.tm_mday,
+			stats.tm.tm_mon + 1,
+			stats.tm.tm_year + 1900);
 	draw_text(sockbuf,
 			bar->width - status_width, y,
 			canvas,
@@ -1222,7 +1222,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		return;
 
 	uint32_t x = 0, i = 0;
-	x += bar_stats.time_width / buffer_scale;
+	x += stats.time_width / buffer_scale;
 	do {
 		if (hide_vacant) {
 			const bool active = seat->bar->mtags & 1 << i;
@@ -1249,7 +1249,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, 2);
 	} else {
-		uint32_t status_x = MAX(x, seat->bar->width - bar_stats.state_width) / buffer_scale;
+		uint32_t status_x = MAX(x, seat->bar->width - stats.state_width) / buffer_scale;
 		if (seat->pointer_x >= status_x) {
 			/* Clicked on status */
 			for (i = 0; i < seat->bar->status.buttons_l; i++) {
@@ -1567,25 +1567,25 @@ void stats_init(void)
 {
 	tzset();
 	time_t t = time(NULL);
-	localtime_r(&t, &bar_stats.tm);
+	localtime_r(&t, &stats.tm);
 
-	bar_stats.proc_stat_fd = open("/proc/stat", O_RDONLY | O_CLOEXEC, 0);
-	if (bar_stats.proc_stat_fd == -1)
+	stats.proc_stat_fd = open("/proc/stat", O_RDONLY | O_CLOEXEC, 0);
+	if (stats.proc_stat_fd == -1)
 		die("failed to open /proc/stat:");
-	bar_stats.cpu_usage = 0;
-	bar_stats.cpu_prev_idle = 0;
-	bar_stats.cpu_prev_total = 0;
+	stats.cpu_usage = 0;
+	stats.cpu_prev_idle = 0;
+	stats.cpu_prev_total = 0;
 
-	bar_stats.proc_meminfo_fd = open("/proc/meminfo", O_RDONLY | O_CLOEXEC, 0);
-	if (bar_stats.proc_meminfo_fd == -1)
+	stats.proc_meminfo_fd = open("/proc/meminfo", O_RDONLY | O_CLOEXEC, 0);
+	if (stats.proc_meminfo_fd == -1)
 		die("failed to open /proc/meminfo:");
-	bar_stats.mem_usage = 0;
+	stats.mem_usage = 0;
 
 	DIR *dir;
 	if (!(dir = opendir("/sys/class/hwmon/")))
 		die("Could not open directory /sys/class/hwmon/:");
 	struct dirent *de;
-	bar_stats.gpu_hwmon_fd = -1;
+	stats.gpu_hwmon_fd = -1;
 	while ((de = readdir(dir))) {
 		snprintf(sockbuf, 1024, "/sys/class/hwmon/%s/name", de->d_name);
 		int fd = open(sockbuf, O_RDONLY, 0);
@@ -1596,26 +1596,26 @@ void stats_init(void)
 			snprintf(sockbuf, 1024, "/sys/class/hwmon/%s/temp1_input", de->d_name);
 			int fd = open(sockbuf, O_RDONLY | O_CLOEXEC, 0);
 			if (fd != -1) {
-				bar_stats.gpu_hwmon_fd = fd;
+				stats.gpu_hwmon_fd = fd;
 				break;
 			}
 		}
 		close(fd);
 	}
 	closedir(dir);
-	if (bar_stats.gpu_hwmon_fd == -1)
+	if (stats.gpu_hwmon_fd == -1)
 		die("failed to find amdgpu hwmon");
-	bar_stats.gpu_temperature = 0;
+	stats.gpu_temperature = 0;
 
-	bar_stats.prev_sectors_read = 0;
-	bar_stats.prev_sectors_written = 0;
-	bar_stats.cur_sectors_read = 0;
-	bar_stats.cur_sectors_written = 0;
+	stats.prev_sectors_read = 0;
+	stats.prev_sectors_written = 0;
+	stats.cur_sectors_read = 0;
+	stats.cur_sectors_written = 0;
 
 	snprintf(sockbuf, 1024, bar_state_fmt, "0", "0", '0', '0', '0', '0', '0', '0');
-	bar_stats.state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	stats.state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 	snprintf(sockbuf, 1024, bar_time_fmt, '0', '0', '0');
-	bar_stats.time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	stats.time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 }
 
 void
@@ -1624,7 +1624,7 @@ stats_update(void)
 	Bar* bar;
 
 	time_t t = time(NULL);
-	localtime_r(&t, &bar_stats.tm);
+	localtime_r(&t, &stats.tm);
 
 	stats_update_cpu();
 	stats_update_disk();
@@ -1638,8 +1638,8 @@ stats_update(void)
 void
 stats_update_cpu(void)
 {
-	lseek(bar_stats.proc_stat_fd, 5, SEEK_SET);
-	read(bar_stats.proc_stat_fd, sockbuf, 128);
+	lseek(stats.proc_stat_fd, 5, SEEK_SET);
+	read(stats.proc_stat_fd, sockbuf, 128);
 
 	ssize_t j = 0;
 	uint32_t total = 0;
@@ -1678,17 +1678,17 @@ stats_update_cpu(void)
 		++j;
 	}
 
-	uint32_t i = idle - bar_stats.cpu_prev_idle;
-	uint32_t t = total - bar_stats.cpu_prev_total + 1;
+	uint32_t i = idle - stats.cpu_prev_idle;
+	uint32_t t = total - stats.cpu_prev_total + 1;
 
-	bar_stats.cpu_usage = (100 * (t - i) + t / 2) / t;
-	bar_stats.cpu_prev_idle = idle;
-	bar_stats.cpu_prev_total = total;
+	stats.cpu_usage = (100 * (t - i) + t / 2) / t;
+	stats.cpu_prev_idle = idle;
+	stats.cpu_prev_total = total;
 }
 
 void stats_update_disk(void) {
-	bar_stats.prev_sectors_read = bar_stats.cur_sectors_read;
-	bar_stats.prev_sectors_written = bar_stats.cur_sectors_written;
+	stats.prev_sectors_read = stats.cur_sectors_read;
+	stats.prev_sectors_written = stats.cur_sectors_written;
 	DIR *dir;
 	if (!(dir = opendir("/sys/block")))
 		die("Could not open directory /sys/block:");
@@ -1711,7 +1711,7 @@ void stats_update_disk(void) {
 
 		// sectors reads
 		while (*cur == ' ') ++cur;
-		bar_stats.cur_sectors_read = strtoul(cur, &end, 10);
+		stats.cur_sectors_read = strtoul(cur, &end, 10);
 		cur = end;
 
 		// milliseconds spent reading
@@ -1728,7 +1728,7 @@ void stats_update_disk(void) {
 
 		// sectors writes
 		while (*cur == ' ') ++cur;
-		bar_stats.cur_sectors_written = strtoul(cur, &end, 10);
+		stats.cur_sectors_written = strtoul(cur, &end, 10);
 
 		close(fd);
 	}
@@ -1738,10 +1738,10 @@ void stats_update_disk(void) {
 void
 stats_update_gpu_temp(void)
 {
-	lseek(bar_stats.gpu_hwmon_fd, 0, SEEK_SET);
-	read(bar_stats.gpu_hwmon_fd, sockbuf, 128);
+	lseek(stats.gpu_hwmon_fd, 0, SEEK_SET);
+	read(stats.gpu_hwmon_fd, sockbuf, 128);
 	uint32_t file_read = strtoul(sockbuf, NULL, 10);
-	bar_stats.gpu_temperature = file_read / 1000;
+	stats.gpu_temperature = file_read / 1000;
 }
 
 void
@@ -1749,8 +1749,8 @@ stats_update_mem(void)
 {
 	char *word, *cur;
 
-	lseek(bar_stats.proc_meminfo_fd, 10, SEEK_SET);
-	read(bar_stats.proc_meminfo_fd, sockbuf, 128);
+	lseek(stats.proc_meminfo_fd, 10, SEEK_SET);
+	read(stats.proc_meminfo_fd, sockbuf, 128);
 
 	cur = sockbuf;
 	while (*cur == ' ') ++cur;
@@ -1769,7 +1769,7 @@ stats_update_mem(void)
 	*cur = 0;
 	uint32_t available = strtoul(word, NULL, 10);
 
-	bar_stats.mem_usage = 100 - ((100 * available + total / 2) / total);
+	stats.mem_usage = 100 - ((100 * available + total / 2) / total);
 }
 
 void
@@ -1941,9 +1941,9 @@ main(int argc, char **argv)
 
 	/* Clean everything up */
 	close(sock_fd);
-	close(bar_stats.proc_stat_fd);
-	close(bar_stats.proc_meminfo_fd);
-	close(bar_stats.gpu_hwmon_fd);
+	close(stats.proc_stat_fd);
+	close(stats.proc_meminfo_fd);
+	close(stats.gpu_hwmon_fd);
 	unlink(socketpath);
 
 	if (tags) {
