@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <alsa/asoundlib.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -132,6 +133,9 @@ typedef struct {
 	struct wl_list link;
 } Seat;
 
+static void alsa_init(void);
+static uint8_t alsa_get_pplayback(void);
+static uint8_t alsa_get_pcapture(void);
 static void copy_customtext(CustomText *from, CustomText *to);
 static int create_shm_file(void);
 static void die(const char *fmt, ...);
@@ -264,6 +268,11 @@ static struct {
 	uint64_t prev_tx_bytes;
 	uint64_t cur_rx_bytes;
 	uint64_t cur_tx_bytes;
+
+	/* ALSA */
+	snd_mixer_t* mixer;
+	snd_mixer_elem_t* playback;
+	snd_mixer_elem_t* capture;
 } stats;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
@@ -326,6 +335,66 @@ static const struct wl_registry_listener registry_listener = {
 
 
 #include "config.h"
+
+void alsa_init(void)
+{
+    snd_mixer_selem_id_t* sid;
+    if (snd_mixer_selem_id_malloc(&sid))
+		die("failed to alloc mixer_selem_id");
+    snd_mixer_selem_id_set_index(sid, 0);
+
+    if ((snd_mixer_open(&stats.mixer, 0)) < 0)
+		die("failed to open snd mixer");
+
+    if ((snd_mixer_attach(stats.mixer, "default")) < 0) {
+        snd_mixer_close(stats.mixer);
+		die("failed to attach snd mixer");
+    }
+
+    if ((snd_mixer_selem_register(stats.mixer, NULL, NULL)) < 0) {
+        snd_mixer_close(stats.mixer);
+		die("failed to register selem mixer");
+    }
+
+    if ((snd_mixer_load(stats.mixer)) < 0) {
+        snd_mixer_close(stats.mixer);
+		die("failed to load mixer");
+    }
+
+    snd_mixer_selem_id_set_name(sid, "Master");
+    stats.playback = snd_mixer_find_selem(stats.mixer, sid);
+    if (!stats.playback) {
+		snd_mixer_free(stats.mixer);
+		die("failed to find playback selem");
+	}
+
+    snd_mixer_selem_id_set_name(sid, "Capture");
+    stats.capture = snd_mixer_find_selem(stats.mixer, sid);
+    if (!stats.capture) {
+		snd_mixer_free(stats.mixer);
+		die("failed to find capture selem");
+	}
+
+	snd_mixer_selem_id_free(sid);
+}
+
+uint8_t alsa_get_pplayback(void) {
+    long minv, maxv, outvol;
+    snd_mixer_selem_get_playback_volume_range(stats.playback, &minv, &maxv);
+	snd_mixer_selem_get_playback_volume(stats.playback, 0, &outvol);
+	maxv -= minv;
+	outvol -= minv;
+	return ((outvol * 100) + maxv / 2) / maxv;
+}
+
+uint8_t alsa_get_pcapture(void) {
+    long minv, maxv, invol;
+    snd_mixer_selem_get_capture_volume_range(stats.capture, &minv, &maxv);
+	snd_mixer_selem_get_capture_volume(stats.capture, 0, &invol);
+	maxv -= minv;
+	invol -= minv;
+	return ((invol * 100) + maxv / 2) / maxv;
+}
 
 void
 copy_customtext(CustomText *from, CustomText *to)
@@ -451,7 +520,7 @@ draw_frame(Bar *bar)
 						});
 			}
 		}
-		
+
 		x = next_x;
 	}
 
@@ -471,6 +540,8 @@ draw_frame(Bar *bar)
 			stats.gpu_temperature,
 			stats.cpu_usage,
 			stats.mem_usage,
+			alsa_get_pplayback(),
+			alsa_get_pcapture(),
 			stats.tm.tm_mday,
 			stats.tm.tm_mon + 1,
 			stats.tm.tm_year + 1900);
@@ -765,7 +836,6 @@ void
 event_loop(void)
 {
 	int wl_fd = wl_display_get_fd(display);
-
 	int tfd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC);
 	struct itimerspec spec = {
 		{ 1, 0 },
@@ -773,16 +843,18 @@ event_loop(void)
 	};
 	timerfd_settime(tfd, 0, &spec, NULL);
 
-	struct pollfd fds[3] = {
-		{ .fd = wl_fd,   .events = POLLIN },
-		{ .fd = sock_fd, .events = POLLIN },
-		{ .fd = tfd,     .events = POLLIN },
-	};
 	char buf[8];
 	while (run_display) {
 		wl_display_flush(display);
 
-		if (poll(fds, 3, -1) == -1) {
+		int fd_count = snd_mixer_poll_descriptors_count(stats.mixer);
+		struct pollfd fds[fd_count + 3];
+		fds[0] = (struct pollfd) { .fd = wl_fd,   .events = POLLIN };
+        fds[1] = (struct pollfd) { .fd = sock_fd, .events = POLLIN };
+        fds[2] = (struct pollfd) { .fd = tfd,     .events = POLLIN };
+		snd_mixer_poll_descriptors(stats.mixer, &fds[3], fd_count);
+
+		if (poll(fds, fd_count + 3, -1) == -1) {
 			if (errno == EINTR)
 				continue;
 			else
@@ -801,6 +873,17 @@ event_loop(void)
 		if (fds[2].revents) {
 			read(tfd, buf, 8);
 			stats_update();
+		}
+
+		for (int i = 0; i < fd_count; ++i) {
+			if (fds[3 + i].revents & POLLIN) {
+				snd_mixer_handle_events(stats.mixer);
+				wl_list_for_each(bar, &bar_list, link)
+					bar->redraw = true;
+				break;
+			} else if (fds[3 + i].revents & (POLLHUP | POLLERR | POLLNVAL)) {
+				die("disconnected from alsa");
+			}
 		}
 
 		wl_list_for_each(bar, &bar_list, link) {
@@ -1577,10 +1660,12 @@ sig_handler(int sig)
 
 void stats_init(void)
 {
+	/* time and date */
 	tzset();
 	time_t t = time(NULL);
 	localtime_r(&t, &stats.tm);
 
+	/* cpu */
 	stats.proc_stat_fd = open("/proc/stat", O_RDONLY | O_CLOEXEC, 0);
 	if (stats.proc_stat_fd == -1)
 		die("failed to open /proc/stat:");
@@ -1588,11 +1673,13 @@ void stats_init(void)
 	stats.cpu_prev_idle = 0;
 	stats.cpu_prev_total = 0;
 
+	/* memory */
 	stats.proc_meminfo_fd = open("/proc/meminfo", O_RDONLY | O_CLOEXEC, 0);
 	if (stats.proc_meminfo_fd == -1)
 		die("failed to open /proc/meminfo:");
 	stats.mem_usage = 0;
 
+	/* GPU temperature */
 	DIR *dir;
 	if (!(dir = opendir("/sys/class/hwmon/")))
 		die("Could not open directory /sys/class/hwmon/:");
@@ -1619,11 +1706,13 @@ void stats_init(void)
 		die("failed to find amdgpu hwmon");
 	stats.gpu_temperature = 0;
 
+	/* disk */
 	stats.prev_sectors_read = 0;
 	stats.prev_sectors_written = 0;
 	stats.cur_sectors_read = 0;
 	stats.cur_sectors_written = 0;
 
+	/* network */
 	stats.net_rx_bytes_fd =
 		open("/sys/class/net/" NET_INTERFACE_NAME "/statistics/rx_bytes", O_RDONLY | O_CLOEXEC, 0);
 	if (stats.net_rx_bytes_fd == -1)
@@ -1639,7 +1728,11 @@ void stats_init(void)
 	stats.cur_rx_bytes = 0;
 	stats.cur_tx_bytes = 0;
 
-	snprintf(sockbuf, 1024, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0', '0', '0', '0');
+	/* ALSA */
+	alsa_init();
+
+	/* precalculated sizes */
+	snprintf(sockbuf, 1024, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0', '0', '0', '0', '0', '0');
 	stats.state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 	snprintf(sockbuf, 1024, bar_time_fmt, '0', '0', '0');
 	stats.time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
@@ -1990,6 +2083,8 @@ main(int argc, char **argv)
 	close(stats.gpu_hwmon_fd);
 	close(stats.net_rx_bytes_fd);
 	close(stats.net_tx_bytes_fd);
+	snd_mixer_free(stats.mixer);
+
 	unlink(socketpath);
 
 	if (tags) {

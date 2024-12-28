@@ -54,7 +54,7 @@ dwlb-ctl: dwlb-ctl.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Library dependencies
-dwlb: CFLAGS+=$(shell pkg-config --cflags wayland-client wayland-cursor fcft pixman-1)
-dwlb: LDLIBS+=$(shell pkg-config --libs wayland-client wayland-cursor fcft pixman-1) -lrt
+dwlb: CFLAGS+=$(shell pkg-config --cflags wayland-client wayland-cursor fcft pixman-1 alsa)
+dwlb: LDLIBS+=$(shell pkg-config --libs wayland-client wayland-cursor fcft pixman-1 alsa)
 
 .PHONY: all clean install
