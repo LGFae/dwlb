@@ -122,15 +122,16 @@ typedef struct {
 } Seat;
 
 static void alsa_init(void);
-static uint8_t alsa_get_pplayback(void);
 static uint8_t alsa_get_pcapture(void);
+static uint8_t alsa_get_pplayback(void);
+static void bar_free_canvas(Bar const *bar, pixman_image_t *canvas, uint32_t *data);
+static void bar_get_canvas(Bar const *bar, pixman_image_t **canvas, uint32_t **data);
 static int create_shm_file(void);
 static void die(const char *fmt, ...);
+static void draw_background(Bar const *bar, pixman_image_t *canvas, uint32_t x1, uint32_t x2, pixman_color_t const *color);
+static uint32_t draw_foreground(Bar const *bar, pixman_image_t *canvas, char const* text,
+		uint32_t x, uint32_t max_x, uint32_t padding, pixman_color_t const *color);
 static int draw_frame(Bar *bar);
-static uint32_t draw_text(char const *text, uint32_t x, uint32_t y,
-		pixman_image_t *image,
-		uint32_t max_x, uint32_t buf_height, uint32_t padding,
-	  	Color const *colors, uint32_t colors_l);
 static void dwl_wm_layout(void *data, struct zdwl_ipc_manager_v2 *dwl_wm, const char *name);
 static void dwl_wm_output_toggle_visibility(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output);
 static void dwl_wm_output_active(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, uint32_t active);
@@ -219,6 +220,8 @@ static struct {
 	/* precalculated sizes */
 	uint32_t time_width;
 	uint32_t state_width;
+	uint32_t tag_width;
+	uint32_t layout_width;
 
 	/* open file descriptors */
 	int proc_stat_fd;
@@ -320,7 +323,8 @@ static const struct wl_registry_listener registry_listener = {
 
 #include "config.h"
 
-void alsa_init(void)
+void
+alsa_init(void)
 {
     snd_mixer_selem_id_t* sid;
     if (snd_mixer_selem_id_malloc(&sid))
@@ -362,7 +366,20 @@ void alsa_init(void)
 	snd_mixer_selem_id_free(sid);
 }
 
-uint8_t alsa_get_pplayback(void) {
+uint8_t
+alsa_get_pcapture(void)
+{
+    long minv, maxv, invol;
+    snd_mixer_selem_get_capture_volume_range(stats.capture, &minv, &maxv);
+	snd_mixer_selem_get_capture_volume(stats.capture, 0, &invol);
+	maxv -= minv;
+	invol -= minv;
+	return ((invol * 100) + maxv / 2) / maxv;
+}
+
+uint8_t
+alsa_get_pplayback(void)
+{
     long minv, maxv, outvol;
     snd_mixer_selem_get_playback_volume_range(stats.playback, &minv, &maxv);
 	snd_mixer_selem_get_playback_volume(stats.playback, 0, &outvol);
@@ -371,13 +388,20 @@ uint8_t alsa_get_pplayback(void) {
 	return ((outvol * 100) + maxv / 2) / maxv;
 }
 
-uint8_t alsa_get_pcapture(void) {
-    long minv, maxv, invol;
-    snd_mixer_selem_get_capture_volume_range(stats.capture, &minv, &maxv);
-	snd_mixer_selem_get_capture_volume(stats.capture, 0, &invol);
-	maxv -= minv;
-	invol -= minv;
-	return ((invol * 100) + maxv / 2) / maxv;
+void
+bar_free_canvas(Bar const *bar, pixman_image_t *canvas, uint32_t *data)
+{
+	pixman_image_unref(canvas);
+	munmap(data, bar->bufsize);
+}
+
+void
+bar_get_canvas(Bar const *bar, pixman_image_t **canvas, uint32_t **data)
+{
+	*data = mmap(NULL, bar->bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, bar->shm_fd, 0);
+	if (data == MAP_FAILED)
+		die("shared memory mmap:");
+	*canvas = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, *data, bar->width * 4);
 }
 
 int
@@ -419,135 +443,39 @@ die(const char *fmt, ...)
 	exit(1);
 }
 
-int
-draw_frame(Bar *bar)
+void
+draw_background(
+	Bar const *bar,
+	pixman_image_t *canvas,
+	uint32_t x1,
+	uint32_t x2,
+	pixman_color_t const *color)
 {
-	uint32_t *data = mmap(NULL, bar->bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, bar->shm_fd, 0);
-	if (data == MAP_FAILED)
-		die("shared memory mmap:");
-
-	struct wl_shm_pool *pool = wl_shm_create_pool(shm, bar->shm_fd, bar->bufsize);
-	struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, bar->width, bar->height, bar->stride, WL_SHM_FORMAT_ARGB8888);
-	wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
-	wl_shm_pool_destroy(pool);
-
-	pixman_image_t *canvas = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, data, bar->width * 4);
-
-	/* Draw on images */
-	uint32_t x = 0;
-	uint32_t y = (bar->height + font->ascent - font->descent) / 2;
-	uint32_t boxs = font->height / 9;
-	uint32_t boxw = font->height / 6 + 2;
-
-	snprintf(sockbuf, 1024, bar_time_fmt,
-			stats.tm.tm_hour,
-			stats.tm.tm_min,
-			stats.tm.tm_sec);
-	x = draw_text(sockbuf,
-			x, y,
+	if (x1 >= x2 || x1 >= bar->width)
+		return;
+	x2 = MIN(x2, bar->width);
+	pixman_image_fill_boxes(
+			PIXMAN_OP_SRC,
 			canvas,
-			bar->width, bar->height, textpadding,
-			&active_color, 1);
-
-	for (uint32_t i = 0; i < tags_l; i++) {
-		const bool active = bar->mtags & 1 << i;
-		const bool occupied = bar->ctags & 1 << i;
-		const bool urgent = bar->urg & 1 << i;
-
-		if (hide_vacant && !active && !occupied && !urgent)
-			continue;
-
-		Color const *color = urgent ? &urgent_color : (active ? &active_color : (occupied ? &occupied_color : &inactive_color));
-
-		const uint32_t next_x = draw_text(tags[i],
-				x, y,
-				canvas,
-				bar->width, bar->height, textpadding,
-				color, 1);
-
-		if (!hide_vacant && occupied) {
-			pixman_image_fill_boxes(PIXMAN_OP_OVER,
-					canvas, &color->fg, 1,
-					&(pixman_box32_t){
-						.x1 = x + boxs, .x2 = x + boxs + boxw,
-						.y1 = boxs, .y2 = boxs + boxw
-					});
-			if ((!bar->sel || !active) && boxw >= 3) {
-				/* Make box hollow */
-				pixman_image_fill_boxes(PIXMAN_OP_SRC,
-						canvas, &color->bg, 1,
-						&(pixman_box32_t){
-							.x1 = x + boxs + 1, .x2 = x + boxs + boxw - 1,
-							.y1 = boxs + 1, .y2 = boxs + boxw - 1
-						});
-			}
-		}
-
-		x = next_x;
-	}
-
-	x = draw_text(bar->layout,
-			x, y,
-			canvas,
-			bar->width, bar->height, textpadding,
-			&inactive_color, 1);
-
-	uint32_t status_width = MIN(bar->width - x, stats.state_width);
-	snprintf(sockbuf, 1024, bar_state_fmt,
-			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
-			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
-			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
-			print_io((stats.cur_sectors_written - stats.prev_sectors_written) * 512).str,
-			stats.gpu_temperature,
-			stats.cpu_usage,
-			stats.mem_usage,
-			alsa_get_pplayback(),
-			alsa_get_pcapture(),
-			stats.tm.tm_mday,
-			stats.tm.tm_mon + 1,
-			stats.tm.tm_year + 1900);
-	draw_text(sockbuf,
-			bar->width - status_width, y,
-			canvas,
-			bar->width, bar->height, textpadding,
-			&inactive_color, 1);
-
-	pixman_image_fill_boxes(PIXMAN_OP_SRC, canvas,
-			bar->sel ? &middle_sel_color.bg : &middle_color.bg, 1,
-			&(pixman_box32_t){
-				.x1 = x, .x2 = bar->width - status_width,
-				.y1 = 0, .y2 = bar->height
+			color,
+			1,
+			&(pixman_box32_t) {
+				x1, 0,
+				x2, bar->height,
 			});
-	x = MIN(x + textpadding, bar->width - status_width);
-	x = draw_text(bar->window_title,
-			x, y,
-			canvas,
-			bar->width - status_width, bar->height, 0,
-			bar->sel ? &active_color : &inactive_color, 1);
-
-	pixman_image_unref(canvas);
-
-	munmap(data, bar->bufsize);
-
-	wl_surface_set_buffer_scale(bar->wl_surface, buffer_scale);
-	wl_surface_attach(bar->wl_surface, buffer, 0, 0);
-	wl_surface_damage_buffer(bar->wl_surface, 0, 0, bar->width, bar->height);
-	wl_surface_commit(bar->wl_surface);
-
-	return 0;
 }
 
 uint32_t
-draw_text(char const *text,
-	  uint32_t x,
-	  uint32_t y,
-	  pixman_image_t *canvas,
-	  uint32_t max_x,
-	  uint32_t buf_height,
-	  uint32_t padding,
-	  Color const *colors,
-	  uint32_t colors_l)
+draw_foreground(
+	Bar const *bar,
+	pixman_image_t *canvas,
+	char const* text,
+	uint32_t x,
+	uint32_t max_x,
+	uint32_t padding,
+	pixman_color_t const *color)
 {
+	uint32_t y = (bar->height + font->ascent - font->descent) / 2;
 	if (!text || !*text || !max_x)
 		return x;
 
@@ -557,29 +485,9 @@ draw_text(char const *text,
 		return x;
 	x = nx;
 
-	bool draw = canvas && colors;
-
-	pixman_image_t *fg_fill = NULL;
-	pixman_color_t const *cur_bg_color = NULL;
-	if (draw) {
-		fg_fill = pixman_image_create_solid_fill(&colors[0].fg);
-		cur_bg_color = &colors[0].bg;
-	}
-
-	uint32_t color_ind = 1, codepoint, state = UTF8_ACCEPT, last_cp = 0;
+	pixman_image_t *fg_fill = pixman_image_create_solid_fill(color);
+	uint32_t codepoint, state = UTF8_ACCEPT, last_cp = 0;
 	for (char const *p = text; *p; p++) {
-		/* Check for new colors */
-		if (state == UTF8_ACCEPT && colors && draw) {
-			while (color_ind < colors_l && p == colors[color_ind].start) {
-				if (draw) {
-					cur_bg_color = &colors[color_ind].bg;
-					pixman_image_unref(fg_fill);
-					fg_fill = pixman_image_create_solid_fill(&colors[color_ind].fg);
-				}
-				color_ind++;
-			}
-		}
-
 		/* Returns nonzero if more bytes are needed */
 		if (utf8decode(&state, &codepoint, *p))
 			continue;
@@ -599,56 +507,131 @@ draw_text(char const *text,
 		last_cp = codepoint;
 		x += kern;
 
-		if (draw) {
-			pixman_image_fill_boxes(PIXMAN_OP_OVER, canvas,
-					cur_bg_color, 1, &(pixman_box32_t){
-						.x1 = x, .x2 = nx,
-						.y1 = 0, .y2 = buf_height
-					});
-
-			/* Detect and handle pre-rendered glyphs (e.g. emoji) */
-			if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
-				/* Only the alpha channel of the mask is used, so we can
-				 * use fgfill here to blend prerendered glyphs with the
-				 * same opacity */
-				pixman_image_composite32(
-						PIXMAN_OP_OVER, glyph->pix, fg_fill, canvas, 0, 0, 0, 0,
-						x + glyph->x, y - glyph->y, glyph->width, glyph->height);
-			} else {
-				/* Applying the foreground color here would mess up
-				 * component alphas for subpixel-rendered text, so we
-				 * apply it when blending. */
-				pixman_image_composite32(
-						PIXMAN_OP_OVER, fg_fill, glyph->pix, canvas, 0, 0, 0, 0,
-						x + glyph->x, y - glyph->y, glyph->width, glyph->height);
-			}
+		/* Detect and handle pre-rendered glyphs (e.g. emoji) */
+		if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
+			/* Only the alpha channel of the mask is used, so we can
+			 * use fgfill here to blend prerendered glyphs with the
+			 * same opacity */
+			pixman_image_composite32(
+					PIXMAN_OP_OVER, glyph->pix, fg_fill, canvas, 0, 0, 0, 0,
+					x + glyph->x, y - glyph->y, glyph->width, glyph->height);
+		} else {
+			/* Applying the foreground color here would mess up
+			 * component alphas for subpixel-rendered text, so we
+			 * apply it when blending. */
+			pixman_image_composite32(
+					PIXMAN_OP_OVER, fg_fill, glyph->pix, canvas, 0, 0, 0, 0,
+					x + glyph->x, y - glyph->y, glyph->width, glyph->height);
 		}
 
 		/* increment pen position */
 		x = nx;
 	}
 
-	if (draw)
-		pixman_image_unref(fg_fill);
+	pixman_image_unref(fg_fill);
 	if (!last_cp)
 		return ix;
 
 	nx = x + padding;
-	if (draw) {
-		/* Fill padding background */
-		pixman_image_fill_boxes(PIXMAN_OP_OVER, canvas,
-					&colors[0].bg, 1, &(pixman_box32_t){
-						.x1 = ix, .x2 = ix + padding,
-						.y1 = 0, .y2 = buf_height
+	return nx;
+
+}
+
+int
+draw_frame(Bar *bar)
+{
+	uint32_t *data = mmap(NULL, bar->bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, bar->shm_fd, 0);
+	if (data == MAP_FAILED)
+		die("shared memory mmap:");
+
+	struct wl_shm_pool *pool = wl_shm_create_pool(shm, bar->shm_fd, bar->bufsize);
+	struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, bar->width, bar->height, bar->stride, WL_SHM_FORMAT_ARGB8888);
+	wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
+	wl_shm_pool_destroy(pool);
+
+	pixman_image_t *canvas = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, data, bar->width * 4);
+
+	/* Draw on images */
+	uint32_t x = 0;
+	uint32_t boxs = font->height / 9;
+	uint32_t boxw = font->height / 6 + 2;
+
+	snprintf(sockbuf, 1024, bar_time_fmt,
+			stats.tm.tm_hour,
+			stats.tm.tm_min,
+			stats.tm.tm_sec);
+	draw_background(bar, canvas, x, stats.time_width, &active_color.bg);
+	x = draw_foreground(bar, canvas, sockbuf, x, bar->width, textpadding, &active_color.fg);
+
+	for (uint32_t i = 0; i < tags_l; i++) {
+		const bool active = bar->mtags & 1 << i;
+		const bool occupied = bar->ctags & 1 << i;
+		const bool urgent = bar->urg & 1 << i;
+
+		if (hide_vacant && !active && !occupied && !urgent)
+			continue;
+
+		Color const *color = urgent ? &urgent_color : (active ? &active_color : (occupied ? &occupied_color : &inactive_color));
+
+		draw_background(bar, canvas, x, x + stats.tag_width, &color->bg);
+		draw_foreground(bar, canvas, tags[i], x, x + stats.tag_width, textpadding, &color->fg);
+
+		if (!hide_vacant && occupied) {
+			pixman_image_fill_boxes(PIXMAN_OP_OVER,
+					canvas, &color->fg, 1,
+					&(pixman_box32_t){
+						.x1 = x + boxs, .x2 = x + boxs + boxw,
+						.y1 = boxs, .y2 = boxs + boxw
 					});
-		pixman_image_fill_boxes(PIXMAN_OP_OVER, canvas,
-					&colors[0].bg, 1, &(pixman_box32_t){
-						.x1 = x, .x2 = nx,
-						.y1 = 0, .y2 = buf_height
-					});
+			if ((!bar->sel || !active) && boxw >= 3) {
+				/* Make box hollow */
+				pixman_image_fill_boxes(PIXMAN_OP_SRC,
+						canvas, &color->bg, 1,
+						&(pixman_box32_t){
+							.x1 = x + boxs + 1, .x2 = x + boxs + boxw - 1,
+							.y1 = boxs + 1, .y2 = boxs + boxw - 1
+						});
+			}
+		}
+
+		x += stats.tag_width;
 	}
 
-	return nx;
+	draw_background(bar, canvas, x, x + stats.layout_width, &inactive_color.bg);
+	x = draw_foreground(bar, canvas, bar->layout, x, x + stats.layout_width,
+			textpadding, &inactive_color.fg);
+
+	uint32_t status_width = MIN(bar->width - x, stats.state_width);
+	snprintf(sockbuf, 1024, bar_state_fmt,
+			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
+			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
+			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
+			print_io((stats.cur_sectors_written - stats.prev_sectors_written) * 512).str,
+			stats.gpu_temperature,
+			stats.cpu_usage,
+			stats.mem_usage,
+			alsa_get_pplayback(),
+			alsa_get_pcapture(),
+			stats.tm.tm_mday,
+			stats.tm.tm_mon + 1,
+			stats.tm.tm_year + 1900);
+	draw_background(bar, canvas, bar->width - status_width, bar->width, &inactive_color.bg);
+	draw_foreground(bar, canvas, sockbuf, bar->width - status_width, bar->width,
+			textpadding, &inactive_color.fg);
+
+	x = MIN(x + textpadding, bar->width - status_width);
+	draw_foreground(bar, canvas, bar->window_title, x, bar->width - status_width,
+			textpadding, bar->sel ? &active_color.fg : &inactive_color.fg);
+
+	pixman_image_unref(canvas);
+	munmap(data, bar->bufsize);
+
+	wl_surface_set_buffer_scale(bar->wl_surface, buffer_scale);
+	wl_surface_attach(bar->wl_surface, buffer, 0, 0);
+	wl_surface_damage_buffer(bar->wl_surface, 0, 0, bar->width, bar->height);
+	wl_surface_commit(bar->wl_surface);
+
+	return 0;
 }
 
 void
@@ -716,10 +699,22 @@ void
 dwl_wm_output_title(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
 	const char *title)
 {
-	Bar *bar = (Bar *)data;
+	uint32_t *canvas_data;
+	pixman_image_t *canvas;
+	Bar *bar;
 
-	if (bar->window_title)
+	bar = (Bar *)data;
+	if (bar->window_title) {
+		bar_get_canvas(bar, &canvas, &canvas_data);
+		draw_background(
+				bar,
+				canvas,
+				stats.time_width,
+				bar->width - stats.state_width,
+				bar->sel ? &middle_sel_color.bg : &middle_color.bg);
+		bar_free_canvas(bar, canvas, canvas_data);
 		free(bar->window_title);
+	}
 	if (!(bar->window_title = strdup(title)))
 		die("strdup:");
 }
@@ -929,12 +924,16 @@ void
 layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 			uint32_t serial, uint32_t w, uint32_t h)
 {
+	uint32_t *canvas_data;
+	pixman_image_t *canvas;
+	Bar *bar;
+
 	w = w * buffer_scale;
 	h = h * buffer_scale;
 
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
 
-	Bar *bar = (Bar *)data;
+	bar = (Bar *)data;
 
 	if (bar->configured && w == bar->width && h == bar->height)
 		return;
@@ -943,6 +942,15 @@ layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 	bar->height = h;
 	bar->stride = bar->width * 4;
 	expand_shm_file(bar, bar->stride * bar->height);
+
+	bar_get_canvas(bar, &canvas, &canvas_data);
+	draw_background(
+			bar,
+			canvas,
+			stats.time_width,
+			bar->width - stats.state_width,
+			bar->sel ? &middle_sel_color.bg : &middle_color.bg);
+	bar_free_canvas(bar, canvas, canvas_data);
 	bar->configured = true;
 
 	draw_frame(bar);
@@ -1401,7 +1409,8 @@ sig_handler(int sig)
 		run_display = false;
 }
 
-void stats_init(void)
+void
+stats_init(void)
 {
 	/* time and date */
 	tzset();
@@ -1479,6 +1488,8 @@ void stats_init(void)
 	stats.state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 	snprintf(sockbuf, 1024, bar_time_fmt, '0', '0', '0');
 	stats.time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	stats.tag_width = text_width("0", 0xFFFFFFFFu, textpadding);
+	stats.layout_width = text_width("000", 0xFFFFFFFFu, textpadding);
 }
 
 void
@@ -1551,7 +1562,9 @@ stats_update_cpu(void)
 	stats.cpu_prev_total = total;
 }
 
-void stats_update_disk(void) {
+void
+stats_update_disk(void)
+{
 	stats.prev_sectors_read = stats.cur_sectors_read;
 	stats.prev_sectors_written = stats.cur_sectors_written;
 	DIR *dir;
@@ -1681,7 +1694,9 @@ teardown_seat(Seat *seat)
 	free(seat);
 }
 
-uint32_t text_width(char const* text, uint32_t max_x, uint32_t padding) {
+uint32_t
+text_width(char const* text, uint32_t max_x, uint32_t padding)
+{
 	if (!text || !*text || !max_x || ((padding * 2) >= max_x))
 		return 0;
 
