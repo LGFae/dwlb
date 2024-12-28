@@ -69,8 +69,8 @@ typedef struct {
 } IOPrint;
 
 typedef struct {
-	pixman_color_t color;
-	bool bg;
+	pixman_color_t fg;
+	pixman_color_t bg;
 	char *start;
 } Color;
 
@@ -129,9 +129,8 @@ static void die(const char *fmt, ...);
 static int draw_frame(Bar *bar);
 static uint32_t draw_text(char const *text, uint32_t x, uint32_t y,
 		pixman_image_t *image,
-		pixman_color_t const *fg_color, pixman_color_t const *bg_color,
 		uint32_t max_x, uint32_t buf_height, uint32_t padding,
-	  	Color *colors, uint32_t colors_l);
+	  	Color const *colors, uint32_t colors_l);
 static void dwl_wm_layout(void *data, struct zdwl_ipc_manager_v2 *dwl_wm, const char *name);
 static void dwl_wm_output_toggle_visibility(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output);
 static void dwl_wm_output_active(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, uint32_t active);
@@ -447,9 +446,8 @@ draw_frame(Bar *bar)
 	x = draw_text(sockbuf,
 			x, y,
 			canvas,
-			&active_fg_color, &active_bg_color,
 			bar->width, bar->height, textpadding,
-			NULL, 0);
+			&active_color, 1);
 
 	for (uint32_t i = 0; i < tags_l; i++) {
 		const bool active = bar->mtags & 1 << i;
@@ -459,19 +457,17 @@ draw_frame(Bar *bar)
 		if (hide_vacant && !active && !occupied && !urgent)
 			continue;
 
-		pixman_color_t const *fg_color = urgent ? &urgent_fg_color : (active ? &active_fg_color : (occupied ? &occupied_fg_color : &inactive_fg_color));
-		pixman_color_t const *bg_color = urgent ? &urgent_bg_color : (active ? &active_bg_color : (occupied ? &occupied_bg_color : &inactive_bg_color));
+		Color const *color = urgent ? &urgent_color : (active ? &active_color : (occupied ? &occupied_color : &inactive_color));
 
 		const uint32_t next_x = draw_text(tags[i],
 				x, y,
 				canvas,
-				fg_color, bg_color,
 				bar->width, bar->height, textpadding,
-				NULL, 0);
+				color, 1);
 
 		if (!hide_vacant && occupied) {
 			pixman_image_fill_boxes(PIXMAN_OP_OVER,
-					canvas, fg_color, 1,
+					canvas, &color->fg, 1,
 					&(pixman_box32_t){
 						.x1 = x + boxs, .x2 = x + boxs + boxw,
 						.y1 = boxs, .y2 = boxs + boxw
@@ -479,7 +475,7 @@ draw_frame(Bar *bar)
 			if ((!bar->sel || !active) && boxw >= 3) {
 				/* Make box hollow */
 				pixman_image_fill_boxes(PIXMAN_OP_SRC,
-						canvas, bg_color, 1,
+						canvas, &color->bg, 1,
 						&(pixman_box32_t){
 							.x1 = x + boxs + 1, .x2 = x + boxs + boxw - 1,
 							.y1 = boxs + 1, .y2 = boxs + boxw - 1
@@ -493,9 +489,8 @@ draw_frame(Bar *bar)
 	x = draw_text(bar->layout,
 			x, y,
 			canvas,
-			&inactive_fg_color, &inactive_bg_color,
 			bar->width, bar->height, textpadding,
-			NULL, 0);
+			&inactive_color, 1);
 
 	uint32_t status_width = MIN(bar->width - x, stats.state_width);
 	snprintf(sockbuf, 1024, bar_state_fmt,
@@ -514,34 +509,21 @@ draw_frame(Bar *bar)
 	draw_text(sockbuf,
 			bar->width - status_width, y,
 			canvas,
-			&inactive_fg_color, &inactive_bg_color,
 			bar->width, bar->height, textpadding,
-			NULL, 0);
+			&inactive_color, 1);
 
-	uint32_t nx;
-	nx = MIN(x + textpadding, bar->width - status_width);
 	pixman_image_fill_boxes(PIXMAN_OP_SRC, canvas,
-			bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
+			bar->sel ? &middle_sel_color.bg : &middle_color.bg, 1,
 			&(pixman_box32_t){
-				.x1 = x, .x2 = nx,
+				.x1 = x, .x2 = bar->width - status_width,
 				.y1 = 0, .y2 = bar->height
 			});
-	x = nx;
+	x = MIN(x + textpadding, bar->width - status_width);
 	x = draw_text(bar->window_title,
 			x, y,
 			canvas,
-			bar->sel ? &active_fg_color : &inactive_fg_color,
-			bar->sel ? &active_bg_color : &inactive_bg_color,
 			bar->width - status_width, bar->height, 0,
-			NULL,
-			0);
-
-	pixman_image_fill_boxes(PIXMAN_OP_SRC, canvas,
-			bar->sel ? &middle_bg_color_selected : &middle_bg_color, 1,
-			&(pixman_box32_t){
-	    		.x1 = x, .x2 = bar->width - status_width,
-	    		.y1 = 0, .y2 = bar->height
-    		});
+			bar->sel ? &active_color : &inactive_color, 1);
 
 	pixman_image_unref(canvas);
 
@@ -560,12 +542,10 @@ draw_text(char const *text,
 	  uint32_t x,
 	  uint32_t y,
 	  pixman_image_t *canvas,
-	  pixman_color_t const *fg_color,
-	  pixman_color_t const *bg_color,
 	  uint32_t max_x,
 	  uint32_t buf_height,
 	  uint32_t padding,
-	  Color *colors,
+	  Color const *colors,
 	  uint32_t colors_l)
 {
 	if (!text || !*text || !max_x)
@@ -577,27 +557,24 @@ draw_text(char const *text,
 		return x;
 	x = nx;
 
-	bool draw = canvas && bg_color && fg_color;
+	bool draw = canvas && colors;
 
 	pixman_image_t *fg_fill = NULL;
 	pixman_color_t const *cur_bg_color = NULL;
 	if (draw) {
-		fg_fill = pixman_image_create_solid_fill(fg_color);
-		cur_bg_color = bg_color;
+		fg_fill = pixman_image_create_solid_fill(&colors[0].fg);
+		cur_bg_color = &colors[0].bg;
 	}
 
-	uint32_t color_ind = 0, codepoint, state = UTF8_ACCEPT, last_cp = 0;
+	uint32_t color_ind = 1, codepoint, state = UTF8_ACCEPT, last_cp = 0;
 	for (char const *p = text; *p; p++) {
 		/* Check for new colors */
 		if (state == UTF8_ACCEPT && colors && draw) {
 			while (color_ind < colors_l && p == colors[color_ind].start) {
 				if (draw) {
-					if (colors[color_ind].bg) {
-						cur_bg_color = &colors[color_ind].color;
-					} else  {
-						pixman_image_unref(fg_fill);
-						fg_fill = pixman_image_create_solid_fill(&colors[color_ind].color);
-					}
+					cur_bg_color = &colors[color_ind].bg;
+					pixman_image_unref(fg_fill);
+					fg_fill = pixman_image_create_solid_fill(&colors[color_ind].fg);
 				}
 				color_ind++;
 			}
@@ -660,12 +637,12 @@ draw_text(char const *text,
 	if (draw) {
 		/* Fill padding background */
 		pixman_image_fill_boxes(PIXMAN_OP_OVER, canvas,
-					bg_color, 1, &(pixman_box32_t){
+					&colors[0].bg, 1, &(pixman_box32_t){
 						.x1 = ix, .x2 = ix + padding,
 						.y1 = 0, .y2 = buf_height
 					});
 		pixman_image_fill_boxes(PIXMAN_OP_OVER, canvas,
-					bg_color, 1, &(pixman_box32_t){
+					&colors[0].bg, 1, &(pixman_box32_t){
 						.x1 = x, .x2 = nx,
 						.y1 = 0, .y2 = buf_height
 					});

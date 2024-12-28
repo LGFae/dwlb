@@ -4,18 +4,17 @@
 	  .blue  = ((hex >> 8) & 0xff) * 257,	\
 	  .alpha = (hex & 0xff) * 257 }
 
+#define DECLARE_COLOR(name, foreground, background, start) \
+	static const Color name ## _color = { foreground, background, start }
+
 // set 16-bit colors for bar
 // use either pixman_color_t struct or HEX_COLOR macro for 8-bit colors
-static const pixman_color_t active_fg_color = HEX_COLOR(0xeeeeeeff);
-static const pixman_color_t active_bg_color = HEX_COLOR(0x005577ff);
-static const pixman_color_t occupied_fg_color = HEX_COLOR(0xeeeeeeff);
-static const pixman_color_t occupied_bg_color = HEX_COLOR(0x005577ff);
-static const pixman_color_t inactive_fg_color = HEX_COLOR(0xbbbbbbff);
-static const pixman_color_t inactive_bg_color = HEX_COLOR(0x222222ff);
-static const pixman_color_t urgent_fg_color = HEX_COLOR(0x222222ff);
-static const pixman_color_t urgent_bg_color = HEX_COLOR(0xeeeeeeff);
-static const pixman_color_t middle_bg_color = HEX_COLOR(0x222222ff);
-static const pixman_color_t middle_bg_color_selected = HEX_COLOR(0x005577ff);
+DECLARE_COLOR(active,     HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff), NULL);
+DECLARE_COLOR(occupied,   HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff), NULL);
+DECLARE_COLOR(inactive,   HEX_COLOR(0xbbbbbbff), HEX_COLOR(0x222222ff), NULL);
+DECLARE_COLOR(urgent,     HEX_COLOR(0x222222ff), HEX_COLOR(0xeeeeeeff), NULL);
+DECLARE_COLOR(middle,     HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x222222ff), NULL);
+DECLARE_COLOR(middle_sel, HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff), NULL);
 
 // this is what we will read in /sys/class/net to collect network data
 #define NET_INTERFACE_NAME "enp10s0"
@@ -39,7 +38,5 @@ static const bool bottom = false;
 static const bool hide_vacant = false;
 // vertical pixel padding above and below text
 static const uint32_t vertical_padding = 0;
-// allow in-line color commands in status text
-static const bool status_commands = true;
 // scale
 static const uint32_t buffer_scale = 1;
