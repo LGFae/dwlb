@@ -1106,7 +1106,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			if (!active && !occupied && !urgent)
 				continue;
 		}
-		x += text_width(tags[i], seat->bar->width - x, textpadding) / buffer_scale;
+		x += stats.tag_width / buffer_scale;
 	} while (seat->pointer_x >= x && ++i < tags_l);
 
 	if (i < tags_l) {
@@ -1117,7 +1117,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, ~0, 1);
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, seat->bar->mtags ^ (1 << i), 0);
-	} else if (seat->pointer_x < (x += text_width(seat->bar->layout, seat->bar->width - x, textpadding))) {
+	} else if (seat->pointer_x < (x += stats.layout_width)) {
 		/* Clicked on layout */
 		if (seat->pointer_button == BTN_LEFT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, seat->bar->last_layout_idx);
