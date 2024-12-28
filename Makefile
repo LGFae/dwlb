@@ -2,7 +2,6 @@ BINS = dwlb dwlb-ctl
 MANS = dwlb.1
 
 PREFIX ?= /usr/local
-CFLAGS += -Wall -Wextra -Wno-unused-parameter -Wno-format-truncation
 
 all: $(BINS)
 
@@ -54,7 +53,7 @@ dwlb-ctl: dwlb-ctl.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Library dependencies
-dwlb: CFLAGS+=$(shell pkg-config --cflags wayland-client wayland-cursor fcft pixman-1 alsa)
+dwlb.o: CFLAGS+=-Wall -Wextra -Wno-unused-parameter -I/usr/include/pixman-1
 dwlb: LDLIBS+=$(shell pkg-config --libs wayland-client wayland-cursor fcft pixman-1 alsa)
 
 .PHONY: all clean install
