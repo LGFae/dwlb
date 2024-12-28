@@ -1386,15 +1386,15 @@ static IOPrint print_io(uint64_t io_value) {
 	if (io_value == 0)
 		return ret;
 	else if (io_value < 1000)
-		snprintf(ret.str, 5,"%3lub", io_value);
+		snprintf(ret.str, 5, "%3lub", io_value);
 	else if (io_value < 1000000)
-		snprintf(ret.str, 5,"%3luk", io_value / 1000);
+		snprintf(ret.str, 5, "%3luk", io_value / 1000);
 	else if (io_value < 1000000000)
-		snprintf(ret.str, 5,"%3lum", io_value / 1000000);
+		snprintf(ret.str, 5, "%3lum", io_value / 1000000);
 	else if  (io_value < 1000000000000)
-		snprintf(ret.str, 5,"%3lug", io_value / 1000000000);
+		snprintf(ret.str, 5, "%3lug", io_value / 1000000000);
 	else
-		snprintf(ret.str, 5,"%3lut", io_value / 1000000000000);
+		snprintf(ret.str, 5, "%3lut", io_value / 1000000000000);
 
 	return ret;
 }

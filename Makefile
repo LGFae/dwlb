@@ -53,7 +53,7 @@ dwlb-ctl: dwlb-ctl.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Library dependencies
-dwlb.o: CFLAGS+=-Wall -Wextra -Wno-unused-parameter -I/usr/include/pixman-1
+dwlb.o: CFLAGS+=-Wall -Wextra -Wno-unused-parameter -Wno-format-truncation -I/usr/include/pixman-1
 dwlb: LDLIBS+=$(shell pkg-config --libs wayland-client wayland-cursor fcft pixman-1 alsa)
 
 .PHONY: all clean install
