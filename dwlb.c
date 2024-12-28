@@ -835,9 +835,9 @@ dwl_wm_tags(void *data, struct zdwl_ipc_manager_v2 *dwl_wm,
 void
 event_loop(void)
 {
-	int wl_fd = wl_display_get_fd(display);
-	int tfd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC);
-	struct itimerspec spec = {
+	const int wl_fd = wl_display_get_fd(display);
+	const int tfd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC);
+	const struct itimerspec spec = {
 		{ 1, 0 },
 		{ 1, 0 },
 	};
