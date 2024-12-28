@@ -10,27 +10,23 @@
 
 #include "commands.h"
 
-#define TEXT_MAX 2048
 #define PROGRAM "dwlb-ctl"
 #define VERSION "0.1"
 
 static char socketdir[256];
-static char sockbuf[4096];
-static char *socketpath;
+static char sockbuf[256];
 
 static const char * const usage =
-	"usage: dwlb-ctl [Command]\n"
+	"usage: dwlb-ctl <Command>\n"
 	"Commands\n"
-	"    -target-socket [SOCKET-NAME]    set the socket to send command to.\n"
-	"                                    Sockets can be found in `$XDG_RUNTIME_DIR/dwlb/`\n"
-	"    -status        [OUTPUT] [TEXT]  set status text\n"
-	"    -status-stdin  [OUTPUT]         set status text from stdin\n"
-	"    -show          [OUTPUT]         show bar\n"
-	"    -hide          [OUTPUT]         hide bar\n"
-	"    -toggle-visibility [OUTPUT]     toggle bar visibility\n"
-	"    -set-top       [OUTPUT]         draw bar at the top\n"
-	"    -set-bottom    [OUTPUT]         draw bar at the bottom\n"
-	"    -toggle-location [OUTPUT]       toggle bar location\n"
+	"    -target-socket     <SOCKET-NAME>  set the socket to send command to.\n"
+	"                                      Sockets are in `$XDG_RUNTIME_DIR/dwlb/`\n"
+	"    -show              <OUTPUT>       show bar\n"
+	"    -hide              <OUTPUT>       hide bar\n"
+	"    -toggle-visibility <OUTPUT>       toggle bar visibility\n"
+	"    -set-top           <OUTPUT>       draw bar at the top\n"
+	"    -set-bottom        <OUTPUT>       draw bar at the bottom\n"
+	"    -toggle-location   <OUTPUT>       toggle bar location\n"
 	"\n"
 	"  For every command, [OUTPUT] 'all' will apply the command on all outputs,\n"
 	"  while 'selected' will apply to the current select output.\n"
@@ -55,31 +51,26 @@ die(const char *fmt, ...)
 		fputc('\n', stderr);
 	}
 
-	if (socketpath)
-		unlink(socketpath);
-
 	exit(1);
 }
 
 void
 client_send_command(struct sockaddr_un *sock_address, const char *output,
-		    enum Command cmd, const char *data, const char *target_socket)
+		    enum Command cmd, const char *target_socket)
 {
 	int sock_fd;
 	size_t len;
+	bool newfd;
 	DIR *dir;
+	struct dirent *de;
+
 	if (!(dir = opendir(socketdir)))
 		die("Could not open directory '%s':", socketdir);
 
-	if (data)
-		len = snprintf(sockbuf, sizeof(sockbuf), "%c%s %s", cmd, output, data);
-	else
-		len = snprintf(sockbuf, sizeof(sockbuf), "%c%s", cmd, output);
-
-	struct dirent *de;
-	bool newfd = true;
+	len = snprintf(sockbuf, sizeof(sockbuf), "%c%s", cmd, output);
 
 	/* Send data to all dwlb instances */
+	newfd = true;
 	while ((de = readdir(dir))) {
 		if (!strncmp(de->d_name, "dwlb-", 5)) {
 			if (!target_socket || !strncmp(de -> d_name, target_socket, 6)){
@@ -118,7 +109,7 @@ main(int argc, char **argv)
 	struct stat sb;
     if (!(stat(socketdir, &sb) == 0 && S_ISDIR(sb.st_mode)))
 		die("there is no directory for the dwlb socket in: %s", xdgruntimedir);
-    
+
 	sock_address.sun_family = AF_UNIX;
 
 	/* Parse options */
@@ -126,48 +117,35 @@ main(int argc, char **argv)
 	int i = 1;
 	if (argc > 1 && !strcmp(argv[1], "-target-socket")) {
 		if (2 >= argc) {
-			die("Option -socket requires an argument");
+			die("Option -target-socket requires an argument");
 		}
 		target_socket = argv[2];
 		i += 2;
 	}
-	if (!strcmp(argv[i], "-status")) {
-		if (++i + 1 >= argc)
-			die("Option -status requires two arguments");
-		client_send_command(&sock_address, argv[i], CommandStatus, argv[i + 1], target_socket);
-	} else if (!strcmp(argv[i], "-status-stdin")) {
-		if (++i >= argc)
-			die("Option -status-stdin requires an argument");
-		char *status = malloc(TEXT_MAX * sizeof(char));
-		while (fgets(status, TEXT_MAX-1, stdin)) {
-			status[strlen(status)-1] = '\0';
-			client_send_command(&sock_address, argv[i], CommandStatus, status, target_socket);
-		}
-		free(status);
-	} else if (!strcmp(argv[i], "-show")) {
+	if (!strcmp(argv[i], "-show")) {
 		if (++i >= argc)
 			die("Option -show requires an argument");
-		client_send_command(&sock_address, argv[i], CommandShow, NULL, target_socket);
+		client_send_command(&sock_address, argv[i], CommandShow, target_socket);
 	} else if (!strcmp(argv[i], "-hide")) {
 		if (++i >= argc)
 			die("Option -hide requires an argument");
-		client_send_command(&sock_address, argv[i], CommandHide, NULL, target_socket);
+		client_send_command(&sock_address, argv[i], CommandHide, target_socket);
 	} else if (!strcmp(argv[i], "-toggle-visibility")) {
 		if (++i >= argc)
 			die("Option -toggle requires an argument");
-		client_send_command(&sock_address, argv[i], CommandToggleVis, NULL, target_socket);
+		client_send_command(&sock_address, argv[i], CommandToggleVis, target_socket);
 	} else if (!strcmp(argv[i], "-set-top")) {
 		if (++i >= argc)
 			die("Option -set-top requires an argument");
-		client_send_command(&sock_address, argv[i], CommandSetTop, NULL, target_socket);
+		client_send_command(&sock_address, argv[i], CommandSetTop, target_socket);
 	} else if (!strcmp(argv[i], "-set-bottom")) {
 		if (++i >= argc)
 			die("Option -set-bottom requires an argument");
-		client_send_command(&sock_address, argv[i], CommandSetBot, NULL, target_socket);
+		client_send_command(&sock_address, argv[i], CommandSetBot, target_socket);
 	} else if (!strcmp(argv[i], "-toggle-location")) {
 		if (++i >= argc)
 			die("Option -toggle-location requires an argument");
-		client_send_command(&sock_address, argv[i], CommandToggleLoc, NULL, target_socket);
+		client_send_command(&sock_address, argv[i], CommandToggleLoc, target_socket);
 	} else if (!strcmp(argv[i], "-v")) {
 		printf(PROGRAM " " VERSION "\n");
 	} else if (!strcmp(argv[i], "-h")) {

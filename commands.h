@@ -2,7 +2,6 @@
 #define __COMMANDS_H__
 
 enum Command {
-	CommandStatus = 1,
 	CommandShow,
 	CommandHide,
 	CommandToggleVis,

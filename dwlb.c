@@ -1,6 +1,5 @@
 #define _GNU_SOURCE
 #include <alsa/asoundlib.h>
-#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcft/fcft.h>
@@ -10,6 +9,7 @@
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,8 +62,6 @@ static const char * const usage =
 	"	-v		get version information\n"
 	"	-h		view this help text\n";
 
-#define TEXT_MAX 2048
-
 enum { WheelUp, WheelDown };
 
 typedef struct {
@@ -82,14 +80,6 @@ typedef struct {
 	uint32_t x2;
 	char command[128];
 } Button;
-
-typedef struct {
-	char text[TEXT_MAX];
-	Color *colors;
-	uint32_t colors_l, colors_c;
-	Button *buttons;
-	uint32_t buttons_l, buttons_c;
-} CustomText;
 
 typedef struct {
 	struct wl_output *wl_output;
@@ -113,8 +103,6 @@ typedef struct {
 
 	int shm_fd;
 
-	CustomText status;
-
 	bool configured;
 	bool hidden, bottom;
 	bool redraw;
@@ -136,7 +124,6 @@ typedef struct {
 static void alsa_init(void);
 static uint8_t alsa_get_pplayback(void);
 static uint8_t alsa_get_pcapture(void);
-static void copy_customtext(CustomText *from, CustomText *to);
 static int create_shm_file(void);
 static void die(const char *fmt, ...);
 static int draw_frame(Bar *bar);
@@ -170,8 +157,6 @@ static void output_done(void *data, struct zxdg_output_v1 *xdg_output);
 static void output_logical_size(void *data, struct zxdg_output_v1 *xdg_output, int32_t width, int32_t height);
 static void output_logical_position(void *data, struct zxdg_output_v1 *xdg_output, int32_t x, int32_t y);
 static void output_name(void *data, struct zxdg_output_v1 *xdg_output, const char *name);
-static int parse_color(const char *str, pixman_color_t *clr);
-static void parse_into_customtext(CustomText *ct, char const *text);
 static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value);
 static void pointer_axis_discrete(void *data, struct wl_pointer *pointer, uint32_t axis, int32_t discrete);
 static void pointer_axis_source(void *data, struct wl_pointer *pointer, uint32_t axis_source);
@@ -396,25 +381,6 @@ uint8_t alsa_get_pcapture(void) {
 	return ((invol * 100) + maxv / 2) / maxv;
 }
 
-void
-copy_customtext(CustomText *from, CustomText *to)
-{
-	snprintf(to->text, sizeof to->text, "%s", from->text);
-	to->colors_l = to->buttons_l = 0;
-	for (uint32_t i = 0; i < from->colors_l; i++) {
-		Color *color;
-		ARRAY_APPEND(to->colors, to->colors_l, to->colors_c, color);
-		color->color = from->colors[i].color;
-		color->bg = from->colors[i].bg;
-		color->start = from->colors[i].start - (char *)&from->text + (char *)&to->text;
-	}
-	for (uint32_t i = 0; i < from->buttons_l; i++) {
-		Button *button;
-		ARRAY_APPEND(to->buttons, to->buttons_l, to->buttons_c, button);
-		*button = from->buttons[i];
-	}
-}
-
 int
 create_shm_file(void)
 {
@@ -550,7 +516,7 @@ draw_frame(Bar *bar)
 			canvas,
 			&inactive_fg_color, &inactive_bg_color,
 			bar->width, bar->height, textpadding,
-			bar->status.colors, bar->status.colors_l);
+			NULL, 0);
 
 	uint32_t nx;
 	nx = MIN(x + textpadding, bar->width - status_width);
@@ -1044,176 +1010,6 @@ output_logical_position(void *data, struct zxdg_output_v1 *xdg_output,
 {
 }
 
-/* Color parsing logic adapted from [sway] */
-int
-parse_color(const char *str, pixman_color_t *clr)
-{
-	if (*str == '#')
-		str++;
-	int len = strlen(str);
-
-	// Disallows "0x" prefix that strtoul would ignore
-	if ((len != 6 && len != 8) || !isxdigit(str[0]) || !isxdigit(str[1]))
-		return -1;
-
-	char *ptr;
-	uint32_t parsed = strtoul(str, &ptr, 16);
-	if (*ptr)
-		return -1;
-
-	if (len == 8) {
-		clr->alpha = (parsed & 0xff) * 0x101;
-		parsed >>= 8;
-	} else {
-		clr->alpha = 0xffff;
-	}
-	clr->red =   ((parsed >> 16) & 0xff) * 0x101;
-	clr->green = ((parsed >>  8) & 0xff) * 0x101;
-	clr->blue =  ((parsed >>  0) & 0xff) * 0x101;
-	return 0;
-}
-
-void
-parse_into_customtext(CustomText *ct, char const *text)
-{
-	ct->colors_l = ct->buttons_l = 0;
-
-	if (status_commands) {
-		uint32_t codepoint;
-		uint32_t state = UTF8_ACCEPT;
-		uint32_t last_cp = 0;
-		uint32_t x = 0;
-		size_t str_pos = 0;
-
-		Button *left_button = NULL;
-		Button *middle_button = NULL;
-		Button *right_button = NULL;
-		Button *scrollup_button = NULL;
-		Button *scrolldown_button = NULL;
-
-		for (char const *p = text; *p && str_pos < sizeof(ct->text) - 1; p++) {
-			if (state == UTF8_ACCEPT && *p == '^') {
-				p++;
-				if (*p != '^') {
-					char *arg, *end;
-					if (!(arg = strchr(p, '(')) || !(end = strchr(arg + 1, ')')))
-						continue;
-					*arg++ = '\0';
-					*end = '\0';
-
-					if (!strcmp(p, "bg")) {
-						Color *color;
-						ARRAY_APPEND(ct->colors, ct->colors_l, ct->colors_c, color);
-						if (!*arg)
-							color->color = inactive_bg_color;
-						else
-							parse_color(arg, &color->color);
-						color->bg = true;
-						color->start = ct->text + str_pos;
-					} else if (!strcmp(p, "fg")) {
-						Color *color;
-						ARRAY_APPEND(ct->colors, ct->colors_l, ct->colors_c, color);
-						if (!*arg)
-							color->color = inactive_fg_color;
-						else
-							parse_color(arg, &color->color);
-						color->bg = false;
-						color->start = ct->text + str_pos;
-					} else if (!strcmp(p, "lm")) {
-						if (left_button) {
-							left_button->x2 = x;
-							left_button = NULL;
-						} else if (*arg) {
-							ARRAY_APPEND(ct->buttons, ct->buttons_l, ct->buttons_c, left_button);
-							left_button->btn = BTN_LEFT;
-							snprintf(left_button->command, sizeof left_button->command, "%s", arg);
-							left_button->x1 = x;
-						}
-					} else if (!strcmp(p, "mm")) {
-						if (middle_button) {
-							middle_button->x2 = x;
-							middle_button = NULL;
-						} else if (*arg) {
-							ARRAY_APPEND(ct->buttons, ct->buttons_l, ct->buttons_c, middle_button);
-							middle_button->btn = BTN_MIDDLE;
-							snprintf(middle_button->command, sizeof middle_button->command, "%s", arg);
-							middle_button->x1 = x;
-						}
-					} else if (!strcmp(p, "rm")) {
-						if (right_button) {
-							right_button->x2 = x;
-							right_button = NULL;
-						} else if (*arg) {
-							ARRAY_APPEND(ct->buttons, ct->buttons_l, ct->buttons_c, right_button);
-							right_button->btn = BTN_RIGHT;
-							snprintf(right_button->command, sizeof right_button->command, "%s", arg);
-							right_button->x1 = x;
-						}
-					} else if (!strcmp(p, "us")) {
-						if (scrollup_button) {
-							scrollup_button->x2 = x;
-							scrollup_button = NULL;
-						} else if (*arg) {
-							ARRAY_APPEND(ct->buttons, ct->buttons_l, ct->buttons_c, scrollup_button);
-							scrollup_button->btn = WheelUp;
-							snprintf(scrollup_button->command, sizeof scrollup_button->command, "%s", arg);
-							scrollup_button->x1 = x;
-						}
-					} else if (!strcmp(p, "ds")) {
-						if (scrolldown_button) {
-							scrolldown_button->x2 = x;
-							scrolldown_button = NULL;
-						} else if (*arg) {
-							ARRAY_APPEND(ct->buttons, ct->buttons_l, ct->buttons_c, scrolldown_button);
-							scrolldown_button->btn = WheelDown;
-							snprintf(scrolldown_button->command, sizeof scrolldown_button->command, "%s", arg);
-							scrolldown_button->x1 = x;
-						}
-					}
-
-					*--arg = '(';
-					*end = ')';
-
-					p = end;
-					continue;
-				}
-			}
-
-			ct->text[str_pos++] = *p;
-
-			if (utf8decode(&state, &codepoint, *p))
-				continue;
-
-			const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(font, codepoint, FCFT_SUBPIXEL_NONE);
-			if (!glyph)
-				continue;
-
-			long kern = 0;
-			if (last_cp)
-				fcft_kerning(font, last_cp, codepoint, &kern, NULL);
-			last_cp = codepoint;
-
-			x += kern + glyph->advance.x;
-		}
-
-		if (left_button)
-			left_button->x2 = x;
-		if (middle_button)
-			middle_button->x2 = x;
-		if (right_button)
-			right_button->x2 = x;
-		if (scrollup_button)
-			scrollup_button->x2 = x;
-		if (scrolldown_button)
-			scrolldown_button->x2 = x;
-
-
-		ct->text[str_pos] = '\0';
-	} else {
-		snprintf(ct->text, sizeof ct->text, "%s", text);
-	}
-}
-
 void
 pointer_axis(void *data, struct wl_pointer *pointer,
 	     uint32_t time, uint32_t axis, wl_fixed_t value)
@@ -1224,16 +1020,15 @@ void
 pointer_axis_discrete(void *data, struct wl_pointer *pointer,
 		      uint32_t axis, int32_t discrete)
 {
-	uint32_t i;
-	uint32_t btn = discrete < 0 ? WheelUp : WheelDown;
+	// uint32_t i;
+	// uint32_t btn = discrete < 0 ? WheelUp : WheelDown;
 	Seat *seat = (Seat *)data;
 
 	if (!seat->bar)
 		return;
 
-	uint32_t status_x = seat->bar->width / buffer_scale - text_width(seat->bar->status.text, seat->bar->width, textpadding) / buffer_scale;
+	/*uint32_t status_x = seat->bar->width / buffer_scale - text_width(seat->bar->status.text, seat->bar->width, textpadding) / buffer_scale;
 	if (seat->pointer_x > status_x) {
-		/* Clicked on status */
 		for (i = 0; i < seat->bar->status.buttons_l; i++) {
 			if (btn == seat->bar->status.buttons[i].btn
 			    && seat->pointer_x >= status_x + textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
@@ -1242,7 +1037,7 @@ pointer_axis_discrete(void *data, struct wl_pointer *pointer,
 				break;
 			}
 		}
-	}
+	}*/
 }
 
 void
@@ -1347,14 +1142,14 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		uint32_t status_x = MAX(x, seat->bar->width - stats.state_width) / buffer_scale;
 		if (seat->pointer_x >= status_x) {
 			/* Clicked on status */
-			for (i = 0; i < seat->bar->status.buttons_l; i++) {
+			/*for (i = 0; i < seat->bar->status.buttons_l; i++) {
 				if (seat->pointer_button == seat->bar->status.buttons[i].btn
 				    && seat->pointer_x >= status_x + textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
 				    && seat->pointer_x < status_x + textpadding + seat->bar->status.buttons[i].x2 / buffer_scale) {
 					shell_command(seat->bar->status.buttons[i].command);
 					break;
 				}
-			}
+			}*/
 		}
 	}
 
@@ -1414,16 +1209,7 @@ read_socket(void)
 	sockbuf[len] = '\0';
 
 	enum Command cmd = sockbuf[0];
-
 	char *output = sockbuf + 1;
-	char *data = NULL;
-
-	for (ssize_t i = 0; output[i] != 0; ++i) {
-		if (output[i] == ' ') {
-			data = output + i + 1;
-			break;
-		}
-	}
 
 	Bar *bar = NULL, *it;
 	bool all = false;
@@ -1450,26 +1236,6 @@ read_socket(void)
 		return;
 
 	switch (cmd) {
-	case CommandStatus: {
-		if (!data)
-			return;
-		if (all) {
-			Bar *first = NULL;
-			wl_list_for_each(bar, &bar_list, link) {
-				if (first) {
-					copy_customtext(&first->status, &bar->status);
-				} else {
-					parse_into_customtext(&bar->status, data);
-					first = bar;
-				}
-				bar->redraw = true;
-			}
-		} else {
-			parse_into_customtext(&bar->status, data);
-			bar->redraw = true;
-		}
-		break;
-	}
 	case CommandShow: {
 		if (all) {
 			wl_list_for_each(bar, &bar_list, link)
@@ -1912,10 +1678,6 @@ stats_update_network(void)
 void
 teardown_bar(Bar *bar)
 {
-	if (bar->status.colors)
-		free(bar->status.colors);
-	if (bar->status.buttons)
-		free(bar->status.buttons);
 	if (bar->window_title)
 		free(bar->window_title);
 	zdwl_ipc_output_v2_destroy(bar->dwl_wm_output);
