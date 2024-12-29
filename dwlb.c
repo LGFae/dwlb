@@ -53,7 +53,6 @@ typedef struct {
 typedef struct {
 	pixman_color_t fg;
 	pixman_color_t bg;
-	char *start;
 } Color;
 
 typedef struct {
@@ -102,6 +101,53 @@ typedef struct {
 
 	struct wl_list link;
 } Seat;
+
+typedef struct {
+	/* open file descriptors */
+	int proc_stat_fd, proc_meminfo_fd, gpu_hwmon_fd;
+	int net_rx_bytes_fd,  net_tx_bytes_fd;
+
+
+	/* cpu */
+	uint32_t cpu_prev_total;
+	uint32_t cpu_prev_idle;
+	uint8_t  cpu_usage;
+
+	/* memory */
+	uint8_t mem_usage;
+
+	/* GPU temperature */
+	uint8_t gpu_temperature;
+
+	/* disk */
+	uint64_t prev_sectors_read;
+	uint64_t prev_sectors_written;
+	uint64_t cur_sectors_read;
+	uint64_t cur_sectors_written;
+
+	/* network */
+	uint64_t prev_rx_bytes;
+	uint64_t prev_tx_bytes;
+	uint64_t cur_rx_bytes;
+	uint64_t cur_tx_bytes;
+
+	/* ALSA */
+	snd_mixer_t* mixer;
+	snd_mixer_elem_t* playback;
+	snd_mixer_elem_t* capture;
+
+	/* time and date */
+	struct tm tm;
+} Stats;
+
+typedef struct {
+	/* precalculated widths */
+	uint32_t time;
+	uint32_t state;
+	uint32_t tag;
+	uint32_t layout;
+
+} DrawAreas;
 
 static void alsa_init(void);
 static uint8_t alsa_get_pcapture(void);
@@ -193,51 +239,8 @@ static uint32_t height, textpadding;
 
 static bool run_display;
 
-static struct {
-	/* precalculated sizes */
-	uint32_t time_width;
-	uint32_t state_width;
-	uint32_t tag_width;
-	uint32_t layout_width;
-
-	/* open file descriptors */
-	int proc_stat_fd;
-	int proc_meminfo_fd;
-	int gpu_hwmon_fd;
-	int net_rx_bytes_fd;
-	int net_tx_bytes_fd;
-
-	/* time and date */
-	struct tm tm;
-
-	/* cpu */
-	uint32_t cpu_prev_total;
-	uint32_t cpu_prev_idle;
-	uint8_t  cpu_usage;
-
-	/* memory */
-	uint8_t mem_usage;
-
-	/* GPU temperature */
-	uint8_t gpu_temperature;
-
-	/* disk */
-	uint64_t prev_sectors_read;
-	uint64_t prev_sectors_written;
-	uint64_t cur_sectors_read;
-	uint64_t cur_sectors_written;
-
-	/* network */
-	uint64_t prev_rx_bytes;
-	uint64_t prev_tx_bytes;
-	uint64_t cur_rx_bytes;
-	uint64_t cur_tx_bytes;
-
-	/* ALSA */
-	snd_mixer_t* mixer;
-	snd_mixer_elem_t* playback;
-	snd_mixer_elem_t* capture;
-} stats;
+static Stats stats;
+static DrawAreas draw_areas;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
 	.release = wl_buffer_release,
@@ -537,7 +540,7 @@ draw_frame(Bar *bar)
 			stats.tm.tm_hour,
 			stats.tm.tm_min,
 			stats.tm.tm_sec);
-	draw_background(bar, canvas, x, stats.time_width, &active_color.bg);
+	draw_background(bar, canvas, x, draw_areas.time, &active_color.bg);
 	x = draw_foreground(bar, canvas, sockbuf, x, bar->width, textpadding, &active_color.fg);
 
 	for (uint32_t i = 0; i < TAGCOUNT; i++) {
@@ -550,8 +553,8 @@ draw_frame(Bar *bar)
 
 		Color const *color = urgent ? &urgent_color : (active ? &active_color : (occupied ? &occupied_color : &inactive_color));
 
-		draw_background(bar, canvas, x, x + stats.tag_width, &color->bg);
-		draw_foreground(bar, canvas, &tags[i * 2], x, x + stats.tag_width, textpadding, &color->fg);
+		draw_background(bar, canvas, x, x + draw_areas.tag, &color->bg);
+		draw_foreground(bar, canvas, &tags[i * 2], x, x + draw_areas.tag, textpadding, &color->fg);
 
 		if (!hide_vacant && occupied) {
 			pixman_image_fill_boxes(PIXMAN_OP_OVER,
@@ -571,14 +574,14 @@ draw_frame(Bar *bar)
 			}
 		}
 
-		x += stats.tag_width;
+		x += draw_areas.tag;
 	}
 
-	draw_background(bar, canvas, x, x + stats.layout_width, &inactive_color.bg);
-	x = draw_foreground(bar, canvas, bar->layout, x, x + stats.layout_width,
+	draw_background(bar, canvas, x, x + draw_areas.layout, &inactive_color.bg);
+	x = draw_foreground(bar, canvas, bar->layout, x, x + draw_areas.layout,
 			textpadding, &inactive_color.fg);
 
-	uint32_t status_width = MIN(bar->width - x, stats.state_width);
+	uint32_t status_width = MIN(bar->width - x, draw_areas.state);
 	snprintf(sockbuf, 1024, bar_state_fmt,
 			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
 			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
@@ -683,8 +686,8 @@ dwl_wm_output_title(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
 		draw_background(
 				bar,
 				canvas,
-				stats.time_width,
-				bar->width - stats.state_width,
+				draw_areas.time,
+				bar->width - draw_areas.state,
 				bar->sel ? &middle_sel_color.bg : &middle_color.bg);
 		bar_free_canvas(bar, canvas, canvas_data);
 		free(bar->window_title);
@@ -912,8 +915,8 @@ layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 	draw_background(
 			bar,
 			canvas,
-			stats.time_width,
-			bar->width - stats.state_width,
+			draw_areas.time,
+			bar->width - draw_areas.state,
 			bar->sel ? &middle_sel_color.bg : &middle_color.bg);
 	bar_free_canvas(bar, canvas, canvas_data);
 	bar->configured = true;
@@ -1062,7 +1065,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		return;
 
 	uint32_t x = 0, i = 0;
-	x += stats.time_width / buffer_scale;
+	x += draw_areas.time / buffer_scale;
 	do {
 		if (hide_vacant) {
 			const bool active = seat->bar->mtags & 1 << i;
@@ -1071,7 +1074,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			if (!active && !occupied && !urgent)
 				continue;
 		}
-		x += stats.tag_width / buffer_scale;
+		x += draw_areas.tag / buffer_scale;
 	} while (seat->pointer_x >= x && ++i < TAGCOUNT);
 
 	if (i < TAGCOUNT) {
@@ -1082,14 +1085,14 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, ~0, 1);
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, seat->bar->mtags ^ (1 << i), 0);
-	} else if (seat->pointer_x < (x += stats.layout_width)) {
+	} else if (seat->pointer_x < (x += draw_areas.layout)) {
 		/* Clicked on layout */
 		if (seat->pointer_button == BTN_LEFT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, seat->bar->last_layout_idx);
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, 2);
 	} else {
-		uint32_t status_x = MAX(x, seat->bar->width - stats.state_width) / buffer_scale;
+		uint32_t status_x = MAX(x, seat->bar->width - draw_areas.state) / buffer_scale;
 		if (seat->pointer_x >= status_x) {
 			/* Clicked on status */
 			/*for (i = 0; i < seat->bar->status.buttons_l; i++) {
@@ -1450,11 +1453,11 @@ stats_init(void)
 
 	/* precalculated sizes */
 	snprintf(sockbuf, 1024, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0', '0', '0', '0', '0', '0');
-	stats.state_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	draw_areas.state = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 	snprintf(sockbuf, 1024, bar_time_fmt, '0', '0', '0');
-	stats.time_width = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
-	stats.tag_width = text_width("0", 0xFFFFFFFFu, textpadding);
-	stats.layout_width = text_width("000", 0xFFFFFFFFu, textpadding);
+	draw_areas.time = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	draw_areas.tag = text_width("0", 0xFFFFFFFFu, textpadding);
+	draw_areas.layout = text_width("000", 0xFFFFFFFFu, textpadding);
 }
 
 void

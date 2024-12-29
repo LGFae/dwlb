@@ -4,17 +4,17 @@
 	  .blue  = ((hex >> 8) & 0xff) * 257,	\
 	  .alpha = (hex & 0xff) * 257 }
 
-#define DECLARE_COLOR(name, foreground, background, start) \
-	static const Color name ## _color = { foreground, background, start }
+#define DECLARE_COLOR(name, foreground, background) \
+	static const Color name ## _color = { foreground, background }
 
 // set 16-bit colors for bar
 // use either pixman_color_t struct or HEX_COLOR macro for 8-bit colors
-DECLARE_COLOR(active,     HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff), NULL);
-DECLARE_COLOR(occupied,   HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff), NULL);
-DECLARE_COLOR(inactive,   HEX_COLOR(0xbbbbbbff), HEX_COLOR(0x222222ff), NULL);
-DECLARE_COLOR(urgent,     HEX_COLOR(0x222222ff), HEX_COLOR(0xeeeeeeff), NULL);
-DECLARE_COLOR(middle,     HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x222222ff), NULL);
-DECLARE_COLOR(middle_sel, HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff), NULL);
+DECLARE_COLOR(active,     HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff));
+DECLARE_COLOR(occupied,   HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff));
+DECLARE_COLOR(inactive,   HEX_COLOR(0xbbbbbbff), HEX_COLOR(0x222222ff));
+DECLARE_COLOR(urgent,     HEX_COLOR(0x222222ff), HEX_COLOR(0xeeeeeeff));
+DECLARE_COLOR(middle,     HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x222222ff));
+DECLARE_COLOR(middle_sel, HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff));
 
 // this is what we will read in /sys/class/net to collect network data
 #define NET_INTERFACE_NAME "enp10s0"
