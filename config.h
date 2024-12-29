@@ -20,15 +20,21 @@ DECLARE_COLOR(middle_sel, HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff), NULL);
 #define NET_INTERFACE_NAME "enp10s0"
 
 // font
-static const size_t fontcount = 2;
-static const char *fontstr[2] = {
+#define FONTCOUNT (2)
+static const char *fontstr[FONTCOUNT] = {
 	"SourceCodePro:style=Semibold:size=13",
 	"Symbols Nerd Font:size=14"
 };
 static const char * const bar_time_fmt = "%02d:%02d:%02d";
 static const char * const bar_state_fmt = "󰛶%4s 󰛴%4s | 󱘾%4s 󱘻%4s | %3d°C | %3d%% | %3d%% | %3d%% %3d%% | %02d-%02d-%04d";
-// tag names
-static const char * const tags_names[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
+
+// tags
+#define TAGCOUNT (9)
+static const char tags[TAGCOUNT * 2] = { "1\0002\0003\0004\0005\0006\0007\0008\0009\000" };
+
+// layouts
+#define LAYOUTCOUNT (3)
+static char layouts[LAYOUTCOUNT][4];
 
 // initially hide all bars
 static const bool hidden = false;

@@ -54,7 +54,7 @@ I would probably just submit raphi's patchset but I don't think that would be po
     <event name="layout">
       <description summary="Announces a layout">
         This event is sent after binding.
-        A roundtrip after binding guarantees the client recieved all layouts.
+        A roundtrip after binding guarantees the client received all layouts.
       </description>
       <arg name="name" type="string"/>
     </event>

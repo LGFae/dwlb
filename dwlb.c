@@ -36,24 +36,6 @@
 #define MAX(a, b)	((a) > (b) ? (a) : (b))
 #define LENGTH(x)	(sizeof (x) / sizeof (x[0]))
 
-#define ARRAY_EXPAND(arr, len, cap, inc)				\
-	do {								\
-		uint32_t new_len, new_cap;				\
-		new_len = (len) + (inc);				\
-		if (new_len > (cap)) {					\
-			new_cap = new_len * 2;				\
-			if (!((arr) = realloc((arr), sizeof(*(arr)) * new_cap))) \
-				die("realloc:");			\
-			(cap) = new_cap;				\
-		}							\
-		(len) = new_len;					\
-	} while (0)
-#define ARRAY_APPEND(arr, len, cap, ptr)		\
-	do {						\
-		ARRAY_EXPAND((arr), (len), (cap), 1);	\
-		(ptr) = &(arr)[(len) - 1];		\
-	} while (0)
-
 #define PROGRAM "dwlb"
 #define VERSION "0.2"
 static const char * const usage =
@@ -205,11 +187,6 @@ static struct wl_cursor_image *cursor_image;
 static struct wl_surface *cursor_surface;
 
 static struct wl_list bar_list, seat_list;
-
-static char **tags;
-static uint32_t tags_l, tags_c;
-static char **layouts;
-static uint32_t layouts_l, layouts_c;
 
 static struct fcft_font *font;
 static uint32_t height, textpadding;
@@ -563,7 +540,7 @@ draw_frame(Bar *bar)
 	draw_background(bar, canvas, x, stats.time_width, &active_color.bg);
 	x = draw_foreground(bar, canvas, sockbuf, x, bar->width, textpadding, &active_color.fg);
 
-	for (uint32_t i = 0; i < tags_l; i++) {
+	for (uint32_t i = 0; i < TAGCOUNT; i++) {
 		const bool active = bar->mtags & 1 << i;
 		const bool occupied = bar->ctags & 1 << i;
 		const bool urgent = bar->urg & 1 << i;
@@ -574,7 +551,7 @@ draw_frame(Bar *bar)
 		Color const *color = urgent ? &urgent_color : (active ? &active_color : (occupied ? &occupied_color : &inactive_color));
 
 		draw_background(bar, canvas, x, x + stats.tag_width, &color->bg);
-		draw_foreground(bar, canvas, tags[i], x, x + stats.tag_width, textpadding, &color->fg);
+		draw_foreground(bar, canvas, &tags[i * 2], x, x + stats.tag_width, textpadding, &color->fg);
 
 		if (!hide_vacant && occupied) {
 			pixman_image_fill_boxes(PIXMAN_OP_OVER,
@@ -638,10 +615,7 @@ void
 dwl_wm_layout(void *data, struct zdwl_ipc_manager_v2 *dwl_wm,
 	const char *name)
 {
-	char **ptr;
-	ARRAY_APPEND(layouts, layouts_l, layouts_c, ptr);
-	if (!(*ptr = strdup(name)))
-		die("strdup:");
+	// these are allocated statically in config.h
 }
 
 void
@@ -730,11 +704,7 @@ dwl_wm_output_layout_symbol(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output
 	const char *layout)
 {
 	Bar *bar = (Bar *)data;
-
-	if (layouts[bar->layout_idx])
-		free(layouts[bar->layout_idx]);
-	if (!(layouts[bar->layout_idx] = strdup(layout)))
-		die("strdup:");
+	strcpy(layouts[bar->layout_idx], layout);
 	bar->layout = layouts[bar->layout_idx];
 }
 
@@ -761,13 +731,8 @@ void
 dwl_wm_tags(void *data, struct zdwl_ipc_manager_v2 *dwl_wm,
 	uint32_t amount)
 {
-	if (!tags && !(tags = malloc(amount * sizeof(char *))))
-		die("malloc:");
-	uint32_t i = tags_l;
-	ARRAY_EXPAND(tags, tags_l, tags_c, MAX(0, (int)amount - (int)tags_l));
-	for (; i < amount; i++)
-		if (!(tags[i] = strdup(tags_names[MIN(i, LENGTH(tags_names)-1)])))
-			die("strdup:");
+	if (amount != TAGCOUNT)
+		die("incorrect tagcount: have %u, expected %u", amount, TAGCOUNT);
 }
 
 void
@@ -1107,9 +1072,9 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 				continue;
 		}
 		x += stats.tag_width / buffer_scale;
-	} while (seat->pointer_x >= x && ++i < tags_l);
+	} while (seat->pointer_x >= x && ++i < TAGCOUNT);
 
-	if (i < tags_l) {
+	if (i < TAGCOUNT) {
 		/* Clicked on tags */
 		if (seat->pointer_button == BTN_LEFT)
 			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, 1 << i, 1);
@@ -1781,7 +1746,7 @@ main(int argc, char **argv)
 
 	unsigned int dpi = 96 * buffer_scale;
 	snprintf(sockbuf, 1024, "dpi=%u", dpi);
-	if (!(font = fcft_from_name(fontcount, fontstr, sockbuf)))
+	if (!(font = fcft_from_name(FONTCOUNT, fontstr, sockbuf)))
 		die("Could not load font");
 	textpadding = (font->height * 2) / 5;
 	height = font->height / buffer_scale + vertical_padding * 2;
@@ -1840,17 +1805,6 @@ main(int argc, char **argv)
 	snd_mixer_free(stats.mixer);
 
 	unlink(socketpath);
-
-	if (tags) {
-		for (uint32_t i = 0; i < tags_l; i++)
-			free(tags[i]);
-		free(tags);
-	}
-	if (layouts) {
-		for (uint32_t i = 0; i < layouts_l; i++)
-			free(layouts[i]);
-		free(layouts);
-	}
 
 	wl_list_for_each_safe(bar, bar2, &bar_list, link)
 		teardown_bar(bar);
