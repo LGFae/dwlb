@@ -86,7 +86,7 @@ typedef struct {
 
 	bool configured;
 	bool hidden, bottom;
-	bool redraw;
+	bool redraw_tags, redraw_window, redraw_layout, redraw;
 } Bar;
 
 typedef struct {
@@ -156,9 +156,13 @@ static void bar_get_canvas(Bar const *bar, pixman_image_t **canvas, uint32_t **d
 static int create_shm_file(void);
 static void die(const char *fmt, ...);
 static void draw_background(Bar const *bar, pixman_image_t *canvas, uint32_t x1, uint32_t x2, pixman_color_t const *color);
-static uint32_t draw_foreground(Bar const *bar, pixman_image_t *canvas, char const* text,
+static void draw_foreground(Bar const *bar, pixman_image_t *canvas, char const* text,
 		uint32_t x, uint32_t max_x, uint32_t padding, pixman_color_t const *color);
-static int draw_frame(Bar *bar);
+static void draw_layout(Bar *bar);
+static void draw_stats(Bar *bar);
+static void draw_tags(Bar *bar);
+static void draw_window_name(Bar *bar);
+static void draw_frame(Bar *bar);
 static void dwl_wm_layout(void *data, struct zdwl_ipc_manager_v2 *dwl_wm, const char *name);
 static void dwl_wm_output_toggle_visibility(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output);
 static void dwl_wm_output_active(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, uint32_t active);
@@ -444,7 +448,7 @@ draw_background(
 			});
 }
 
-uint32_t
+void
 draw_foreground(
 	Bar const *bar,
 	pixman_image_t *canvas,
@@ -454,14 +458,13 @@ draw_foreground(
 	uint32_t padding,
 	pixman_color_t const *color)
 {
+	uint32_t nx;
 	uint32_t y = (bar->height + font->ascent - font->descent) / 2;
 	if (!text || !*text || !max_x)
-		return x;
-
-	uint32_t ix = x, nx;
+		return;
 
 	if ((nx = x + padding) + padding >= max_x)
-		return x;
+		return;
 	x = nx;
 
 	pixman_image_t *fg_fill = pixman_image_create_solid_fill(color);
@@ -508,50 +511,82 @@ draw_foreground(
 	}
 
 	pixman_image_unref(fg_fill);
-	if (!last_cp)
-		return ix;
-
-	nx = x + padding;
-	return nx;
-
 }
 
-int
-draw_frame(Bar *bar)
+void
+draw_layout(Bar *bar)
 {
-	uint32_t *data = mmap(NULL, bar->bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, bar->shm_fd, 0);
-	if (data == MAP_FAILED)
-		die("shared memory mmap:");
+	pixman_image_t *canvas;
+	uint32_t *data;
+	const uint32_t x = draw_widths.time + draw_widths.tag * TAGCOUNT;
 
-	struct wl_shm_pool *pool = wl_shm_create_pool(shm, bar->shm_fd, bar->bufsize);
-	struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, bar->width, bar->height, bar->stride, WL_SHM_FORMAT_ARGB8888);
-	wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
-	wl_shm_pool_destroy(pool);
+	bar_get_canvas(bar, &canvas, &data);
 
-	pixman_image_t *canvas = pixman_image_create_bits(PIXMAN_a8r8g8b8, bar->width, bar->height, data, bar->width * 4);
+	draw_background(bar, canvas, x, x + draw_widths.layout, &inactive_color.bg);
+	draw_foreground(bar, canvas, bar->layout, x, x + draw_widths.layout,
+			textpadding, &inactive_color.fg);
 
-	/* Draw on images */
-	uint32_t x = 0;
-	uint32_t boxs = font->height / 9;
-	uint32_t boxw = font->height / 6 + 2;
+	bar_free_canvas(bar, canvas, data);
+}
+
+void
+draw_stats(Bar *bar)
+{
+	pixman_image_t *canvas;
+	uint32_t *data, width;
+
+	bar_get_canvas(bar, &canvas, &data);
 
 	snprintf(sockbuf, 1024, bar_time_fmt,
 			stats.tm.tm_hour,
 			stats.tm.tm_min,
 			stats.tm.tm_sec);
-	draw_background(bar, canvas, x, draw_widths.time, &active_color.bg);
-	x = draw_foreground(bar, canvas, sockbuf, x, bar->width, textpadding, &active_color.fg);
+	draw_background(bar, canvas, 0, draw_widths.time, &active_color.bg);
+	draw_foreground(bar, canvas, sockbuf, 0, draw_widths.time, textpadding, &active_color.fg);
 
-	for (uint32_t i = 0; i < TAGCOUNT; i++) {
-		const bool active = bar->mtags & 1 << i;
-		const bool occupied = bar->ctags & 1 << i;
-		const bool urgent = bar->urg & 1 << i;
+	width = MIN(bar->width, draw_widths.state);
+	snprintf(sockbuf, 1024, bar_state_fmt,
+			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
+			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
+			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
+			print_io((stats.cur_sectors_written - stats.prev_sectors_written) * 512).str,
+			stats.gpu_temperature,
+			stats.cpu_usage,
+			stats.mem_usage,
+			alsa_get_pplayback(),
+			alsa_get_pcapture(),
+			stats.tm.tm_mday,
+			stats.tm.tm_mon + 1,
+			stats.tm.tm_year + 1900);
+	draw_background(bar, canvas, bar->width - width, bar->width, &inactive_color.bg);
+	draw_foreground(bar, canvas, sockbuf, bar->width - width, bar->width,
+			textpadding, &inactive_color.fg);
+
+	bar_free_canvas(bar, canvas, data);
+}
+
+void
+draw_tags(Bar *bar)
+{
+	pixman_image_t *canvas;
+	uint32_t *data, x, boxs, boxw, i;
+	bool active, occupied, urgent;
+	Color const *color;
+
+	bar_get_canvas(bar, &canvas, &data);
+
+	boxs = font->height / 9;
+	boxw = font->height / 6 + 2;
+	for (i = 0; i < TAGCOUNT; ++i) {
+		active   = bar->mtags & 1 << i;
+		occupied = bar->ctags & 1 << i;
+		urgent   = bar->urg   & 1 << i;
 
 		if (hide_vacant && !active && !occupied && !urgent)
 			continue;
 
-		Color const *color = urgent ? &urgent_color : (active ? &active_color : (occupied ? &occupied_color : &inactive_color));
-
+		x = draw_widths.time + draw_widths.tag * i;
+		color = urgent ? &urgent_color : (active ? &active_color : (occupied ? &occupied_color : &inactive_color));
 		draw_background(bar, canvas, x, x + draw_widths.tag, &color->bg);
 		draw_foreground(bar, canvas, &tags[i * 2], x, x + draw_widths.tag, textpadding, &color->fg);
 
@@ -572,45 +607,39 @@ draw_frame(Bar *bar)
 						});
 			}
 		}
-
-		x += draw_widths.tag;
 	}
 
-	draw_background(bar, canvas, x, x + draw_widths.layout, &inactive_color.bg);
-	x = draw_foreground(bar, canvas, bar->layout, x, x + draw_widths.layout,
-			textpadding, &inactive_color.fg);
+	bar_free_canvas(bar, canvas, data);
+}
 
-	uint32_t status_width = MIN(bar->width - x, draw_widths.state);
-	snprintf(sockbuf, 1024, bar_state_fmt,
-			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
-			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
-			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
-			print_io((stats.cur_sectors_written - stats.prev_sectors_written) * 512).str,
-			stats.gpu_temperature,
-			stats.cpu_usage,
-			stats.mem_usage,
-			alsa_get_pplayback(),
-			alsa_get_pcapture(),
-			stats.tm.tm_mday,
-			stats.tm.tm_mon + 1,
-			stats.tm.tm_year + 1900);
-	draw_background(bar, canvas, bar->width - status_width, bar->width, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, bar->width - status_width, bar->width,
-			textpadding, &inactive_color.fg);
+void
+draw_window_name(Bar *bar)
+{
+	pixman_image_t *canvas;
+	uint32_t *data;
+	const uint32_t width = MIN(bar->width, draw_widths.state);
+	const uint32_t x = MIN(draw_widths.time + draw_widths.tag * TAGCOUNT + draw_widths.layout, bar->width - width);
+	const Color* const color = bar->sel ? &middle_sel_color : &middle_color;
 
-	x = MIN(x + textpadding, bar->width - status_width);
-	draw_foreground(bar, canvas, bar->window_title, x, bar->width - status_width,
-			textpadding, bar->sel ? &active_color.fg : &inactive_color.fg);
+	bar_get_canvas(bar, &canvas, &data);
 
-	pixman_image_unref(canvas);
-	munmap(data, bar->bufsize);
+	draw_background(bar, canvas, x, bar->width - width, &color->bg);
+	draw_foreground(bar, canvas, bar->window_title, x, bar->width - width, textpadding, &color->fg);
 
+	bar_free_canvas(bar, canvas, data);
+}
+
+void
+draw_frame(Bar *bar)
+{
+	struct wl_shm_pool *pool = wl_shm_create_pool(shm, bar->shm_fd, bar->bufsize);
+	struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, bar->width, bar->height, bar->stride, WL_SHM_FORMAT_ARGB8888);
+	wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
+	wl_shm_pool_destroy(pool);
 	wl_surface_set_buffer_scale(bar->wl_surface, buffer_scale);
 	wl_surface_attach(bar->wl_surface, buffer, 0, 0);
 	wl_surface_damage_buffer(bar->wl_surface, 0, 0, bar->width, bar->height);
 	wl_surface_commit(bar->wl_surface);
-
-	return 0;
 }
 
 void
@@ -659,6 +688,8 @@ dwl_wm_output_tag(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
 		bar->urg |= 1 << tag;
 	else
 		bar->urg &= ~(1 << tag);
+
+	bar->redraw_tags = true;
 }
 
 void
@@ -669,30 +700,21 @@ dwl_wm_output_layout(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
 
 	bar->last_layout_idx = bar->layout_idx;
 	bar->layout_idx = layout;
+	bar->redraw_layout = true;
 }
 
 void
 dwl_wm_output_title(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
 	const char *title)
 {
-	uint32_t *canvas_data;
-	pixman_image_t *canvas;
 	Bar *bar;
 
 	bar = (Bar *)data;
-	if (bar->window_title) {
-		bar_get_canvas(bar, &canvas, &canvas_data);
-		draw_background(
-				bar,
-				canvas,
-				draw_widths.time,
-				bar->width - draw_widths.state,
-				bar->sel ? &middle_sel_color.bg : &middle_color.bg);
-		bar_free_canvas(bar, canvas, canvas_data);
+	if (bar->window_title)
 		free(bar->window_title);
-	}
 	if (!(bar->window_title = strdup(title)))
 		die("strdup:");
+	bar->redraw_window = true;
 }
 
 void
@@ -714,7 +736,10 @@ void
 dwl_wm_output_frame(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output)
 {
 	Bar *bar = (Bar *)data;
-	bar->redraw = true;
+	if (bar->redraw_tags)   draw_tags(bar);
+	if (bar->redraw_window) draw_window_name(bar);
+	if (bar->redraw_layout) draw_layout(bar);
+	bar->redraw = bar->redraw_tags | bar->redraw_window | bar->redraw_layout;
 }
 
 void
@@ -796,6 +821,9 @@ event_loop(void)
 				if (!bar->hidden)
 					draw_frame(bar);
 				bar->redraw = false;
+				bar->redraw_tags = false;
+				bar->redraw_layout = false;
+				bar->redraw_window = false;
 			}
 		}
 	}
@@ -920,6 +948,10 @@ layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 	bar_free_canvas(bar, canvas, canvas_data);
 	bar->configured = true;
 
+	draw_tags(bar);
+	draw_layout(bar);
+	draw_window_name(bar);
+	draw_stats(bar);
 	draw_frame(bar);
 }
 
@@ -972,6 +1004,7 @@ void
 pointer_axis_discrete(void *data, struct wl_pointer *pointer,
 		      uint32_t axis, int32_t discrete)
 {
+	//TODO
 	// uint32_t i;
 	// uint32_t btn = discrete < 0 ? WheelUp : WheelDown;
 	Seat *seat = (Seat *)data;
@@ -1093,6 +1126,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 	} else {
 		uint32_t status_x = MAX(x, seat->bar->width - draw_widths.state) / buffer_scale;
 		if (seat->pointer_x >= status_x) {
+			//TODO
 			/* Clicked on status */
 			/*for (i = 0; i < seat->bar->status.buttons_l; i++) {
 				if (seat->pointer_button == seat->bar->status.buttons[i].btn
@@ -1474,8 +1508,10 @@ stats_update(void)
 	stats_update_mem();
 	stats_update_network();
 
-	wl_list_for_each(bar, &bar_list, link)
+	wl_list_for_each(bar, &bar_list, link) {
+		draw_stats(bar);
 		bar->redraw = true;
+	}
 }
 
 void
