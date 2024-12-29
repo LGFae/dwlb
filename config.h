@@ -9,12 +9,13 @@
 
 // set 16-bit colors for bar
 // use either pixman_color_t struct or HEX_COLOR macro for 8-bit colors
-DECLARE_COLOR(active,     HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff));
-DECLARE_COLOR(occupied,   HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff));
+DECLARE_COLOR(time,       HEX_COLOR(0x080410ff), HEX_COLOR(0x936dd3ee));
+DECLARE_COLOR(active,     HEX_COLOR(0x040810ff), HEX_COLOR(0x417ebaee));
+DECLARE_COLOR(occupied,   HEX_COLOR(0x040810ff), HEX_COLOR(0x417ebaee));
 DECLARE_COLOR(inactive,   HEX_COLOR(0xbbbbbbff), HEX_COLOR(0x222222ff));
 DECLARE_COLOR(urgent,     HEX_COLOR(0x222222ff), HEX_COLOR(0xeeeeeeff));
-DECLARE_COLOR(middle,     HEX_COLOR(0xbbbbbbff), HEX_COLOR(0x222222ff));
-DECLARE_COLOR(middle_sel, HEX_COLOR(0xeeeeeeff), HEX_COLOR(0x005577ff));
+DECLARE_COLOR(middle,     HEX_COLOR(0x9b9b9bff), HEX_COLOR(0x2f4e6aee));
+DECLARE_COLOR(middle_sel, HEX_COLOR(0x040810ff), HEX_COLOR(0x417ebaee));
 
 // this is what we will read in /sys/class/net to collect network data
 #define NET_INTERFACE_NAME "enp10s0"
@@ -26,7 +27,8 @@ static const char *fontstr[FONTCOUNT] = {
 	"Symbols Nerd Font:size=14"
 };
 static const char * const bar_time_fmt = "%02d:%02d:%02d";
-static const char * const bar_state_fmt = "󰛶%4s 󰛴%4s | 󱘾%4s 󱘻%4s | %3d°C | %3d%% | %3d%% | %3d%% %3d%% | %02d-%02d-%04d";
+static const char * const bar_state_fmt = "󰛶%4s 󰛴%4s | 󱘾%4s 󱘻%4s | %3d°C | %3d%% | %3d%% | %3d%% %3d%%";
+static const char * const bar_date_fmt = "%02d-%02d-%04d";
 
 // tags
 #define TAGCOUNT (9)

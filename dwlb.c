@@ -223,7 +223,7 @@ static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
 static int sock_fd;
 static char *socketpath = NULL;
-static char sockbuf[1024];
+static char sockbuf[256];
 
 static struct wl_display *display;
 static struct wl_compositor *compositor;
@@ -537,15 +537,15 @@ draw_stats(Bar *bar)
 
 	bar_get_canvas(bar, &canvas, &data);
 
-	snprintf(sockbuf, 1024, bar_time_fmt,
+	snprintf(sockbuf, 256, bar_time_fmt,
 			stats.tm.tm_hour,
 			stats.tm.tm_min,
 			stats.tm.tm_sec);
-	draw_background(bar, canvas, 0, draw_widths.time, &active_color.bg);
-	draw_foreground(bar, canvas, sockbuf, 0, draw_widths.time, textpadding, &active_color.fg);
+	draw_background(bar, canvas, 0, draw_widths.time, &time_color.bg);
+	draw_foreground(bar, canvas, sockbuf, 0, draw_widths.time, textpadding, &time_color.fg);
 
 	width = MIN(bar->width, draw_widths.state);
-	snprintf(sockbuf, 1024, bar_state_fmt,
+	snprintf(sockbuf, 256, bar_state_fmt,
 			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
 			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
 			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
@@ -554,13 +554,20 @@ draw_stats(Bar *bar)
 			stats.cpu_usage,
 			stats.mem_usage,
 			alsa_get_pplayback(),
-			alsa_get_pcapture(),
-			stats.tm.tm_mday,
-			stats.tm.tm_mon + 1,
-			stats.tm.tm_year + 1900);
+			alsa_get_pcapture());
 	draw_background(bar, canvas, bar->width - width, bar->width, &inactive_color.bg);
 	draw_foreground(bar, canvas, sockbuf, bar->width - width, bar->width,
 			textpadding, &inactive_color.fg);
+
+	width = MIN(bar->width, draw_widths.date);
+	snprintf(sockbuf, 256, bar_time_fmt,
+		stats.tm.tm_mday,
+		stats.tm.tm_mon + 1,
+		stats.tm.tm_year + 1900);
+	draw_background(bar, canvas, bar->width - width, bar->width, &active_color.bg);
+	draw_foreground(bar, canvas, sockbuf, bar->width - width, bar->width,
+			textpadding, &active_color.fg);
+
 
 	bar_free_canvas(bar, canvas, data);
 }
@@ -1439,13 +1446,13 @@ stats_init(void)
 	struct dirent *de;
 	stats.gpu_hwmon_fd = -1;
 	while ((de = readdir(dir))) {
-		snprintf(sockbuf, 1024, "/sys/class/hwmon/%s/name", de->d_name);
+		snprintf(sockbuf, 256, "/sys/class/hwmon/%s/name", de->d_name);
 		int fd = open(sockbuf, O_RDONLY, 0);
 		if (fd == -1)
 			continue;
-		read(fd, sockbuf, 1024);
+		read(fd, sockbuf, 256);
 		if (!strncmp(sockbuf, "amdgpu", 6)) {
-			snprintf(sockbuf, 1024, "/sys/class/hwmon/%s/temp1_input", de->d_name);
+			snprintf(sockbuf, 256, "/sys/class/hwmon/%s/temp1_input", de->d_name);
 			int fd = open(sockbuf, O_RDONLY | O_CLOEXEC, 0);
 			if (fd != -1) {
 				stats.gpu_hwmon_fd = fd;
@@ -1485,10 +1492,12 @@ stats_init(void)
 	alsa_init();
 
 	/* precalculated sizes */
-	snprintf(sockbuf, 1024, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0', '0', '0', '0', '0', '0');
-	draw_widths.state = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
-	draw_widths.time = text_width("00:00:00", 0xFFFFFFFFu, textpadding);
-	draw_widths.date = text_width("00-00-0000", 0xFFFFFFFFu, textpadding);
+	snprintf(sockbuf, 256, bar_time_fmt, '0', '0', '0');
+	draw_widths.time = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	snprintf(sockbuf, 256, bar_date_fmt, '0', '0', '0');
+	draw_widths.date = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	snprintf(sockbuf, 256, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0', '0', '0');
+	draw_widths.state = draw_widths.date + text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 	draw_widths.tag = text_width("0", 0xFFFFFFFFu, textpadding);
 	draw_widths.layout = text_width("000", 0xFFFFFFFFu, textpadding);
 }
@@ -1575,11 +1584,11 @@ stats_update_disk(void)
 		die("Could not open directory /sys/block:");
 	struct dirent *de;
 	while ((de = readdir(dir))) {
-		snprintf(sockbuf, 1024, "/sys/block/%s/stat", de->d_name);
+		snprintf(sockbuf, 256, "/sys/block/%s/stat", de->d_name);
 		int fd = open(sockbuf, O_RDONLY, 0);
 		if (fd == -1)
 			continue;
-		read(fd, sockbuf, 1024);
+		read(fd, sockbuf, 256);
 		char *end, *cur = sockbuf;
 
 		// completed reads
@@ -1783,7 +1792,7 @@ main(int argc, char **argv)
 	fcft_set_scaling_filter(FCFT_SCALING_FILTER_LANCZOS3);
 
 	unsigned int dpi = 96 * buffer_scale;
-	snprintf(sockbuf, 1024, "dpi=%u", dpi);
+	snprintf(sockbuf, 256, "dpi=%u", dpi);
 	if (!(font = fcft_from_name(FONTCOUNT, fontstr, sockbuf)))
 		die("Could not load font");
 	textpadding = (font->height * 2) / 5;
