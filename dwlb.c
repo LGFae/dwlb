@@ -44,8 +44,6 @@ static const char * const usage =
 	"	-v		get version information\n"
 	"	-h		view this help text\n";
 
-enum { WheelUp, WheelDown };
-
 typedef struct {
 	char str[5]; // three digits, a suffix (b, k, m, g, t) and a 0-byte
 } IOPrint;
@@ -54,13 +52,6 @@ typedef struct {
 	pixman_color_t fg;
 	pixman_color_t bg;
 } Color;
-
-typedef struct {
-	uint32_t btn;
-	uint32_t x1;
-	uint32_t x2;
-	char command[128];
-} Button;
 
 typedef struct {
 	struct wl_output *wl_output;
@@ -141,6 +132,8 @@ typedef struct {
 } Stats;
 
 typedef struct {
+	uint32_t alsa;
+	uint32_t mic;
 	uint32_t time;
 	uint32_t date;
 	uint32_t state;
@@ -158,6 +151,7 @@ static void die(const char *fmt, ...);
 static void draw_background(Bar const *bar, pixman_image_t *canvas, uint32_t x1, uint32_t x2, pixman_color_t const *color);
 static void draw_foreground(Bar const *bar, pixman_image_t *canvas, char const* text,
 		uint32_t x, uint32_t max_x, uint32_t padding, pixman_color_t const *color);
+static void draw_alsa(Bar *bar);
 static void draw_layout(Bar *bar);
 static void draw_stats(Bar *bar);
 static void draw_tags(Bar *bar);
@@ -207,7 +201,7 @@ static void seat_name(void *data, struct wl_seat *wl_seat, const char *name);
 static void setup_bar(Bar *bar);
 static void set_top(Bar *bar);
 static void set_bottom(Bar *bar);
-static void shell_command(char *command);
+static void shell_command(char const* command);
 static void show_bar(Bar *bar);
 static void sig_handler(int sig);
 static void skip_line(char const** const cur);
@@ -518,6 +512,23 @@ draw_foreground(
 }
 
 void
+draw_alsa(Bar *bar)
+{
+	pixman_image_t *canvas;
+	uint32_t *data, x1, x2;
+
+	bar_get_canvas(bar, &canvas, &data);
+
+	snprintf(sockbuf, 256, bar_alsa_fmt, alsa_get_pplayback(), alsa_get_pcapture());
+	x2 = bar->width - draw_widths.date;
+	x1 = x2 - draw_widths.alsa;
+	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1,  x2, textpadding, &inactive_color.fg);
+
+	bar_free_canvas(bar, canvas, data);
+}
+
+void
 draw_layout(Bar *bar)
 {
 	pixman_image_t *canvas;
@@ -537,7 +548,7 @@ void
 draw_stats(Bar *bar)
 {
 	pixman_image_t *canvas;
-	uint32_t *data, width;
+	uint32_t *data, x1, x2;
 
 	bar_get_canvas(bar, &canvas, &data);
 
@@ -548,7 +559,8 @@ draw_stats(Bar *bar)
 	draw_background(bar, canvas, 0, draw_widths.time, &time_color.bg);
 	draw_foreground(bar, canvas, sockbuf, 0, draw_widths.time, textpadding, &time_color.fg);
 
-	width = MIN(bar->width, draw_widths.state);
+	x2 = MIN(bar->width, bar->width - (draw_widths.alsa + draw_widths.date));
+	x1 = x2 - draw_widths.state;
 	snprintf(sockbuf, 256, bar_state_fmt,
 			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
 			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
@@ -556,22 +568,18 @@ draw_stats(Bar *bar)
 			print_io((stats.cur_sectors_written - stats.prev_sectors_written) * 512).str,
 			stats.gpu_temperature,
 			stats.cpu_usage,
-			stats.mem_usage,
-			alsa_get_pplayback(),
-			alsa_get_pcapture());
-	draw_background(bar, canvas, bar->width - width, bar->width, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, bar->width - width, bar->width,
-			textpadding, &inactive_color.fg);
+			stats.mem_usage);
+	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, textpadding, &inactive_color.fg);
 
-	width = MIN(bar->width, draw_widths.date);
+	x2 = bar->width;
+	x1 = MIN(bar->width, bar->width - draw_widths.date);
 	snprintf(sockbuf, 256, bar_time_fmt,
 		stats.tm.tm_mday,
 		stats.tm.tm_mon + 1,
 		stats.tm.tm_year + 1900);
-	draw_background(bar, canvas, bar->width - width, bar->width, &active_color.bg);
-	draw_foreground(bar, canvas, sockbuf, bar->width - width, bar->width,
-			textpadding, &active_color.fg);
-
+	draw_background(bar, canvas, x1, x2, &active_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, textpadding, &active_color.fg);
 
 	bar_free_canvas(bar, canvas, data);
 }
@@ -819,8 +827,10 @@ event_loop(void)
 		for (int i = 0; i < fd_count; ++i) {
 			if (fds[3 + i].revents & POLLIN) {
 				snd_mixer_handle_events(stats.mixer);
-				wl_list_for_each(bar, &bar_list, link)
+				wl_list_for_each(bar, &bar_list, link) {
+					draw_alsa(bar);
 					bar->redraw = true;
+				}
 				break;
 			} else if (fds[3 + i].revents & (POLLHUP | POLLERR | POLLNVAL)) {
 				die("disconnected from alsa");
@@ -959,6 +969,7 @@ layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 	bar_free_canvas(bar, canvas, canvas_data);
 	bar->configured = true;
 
+	draw_alsa(bar);
 	draw_tags(bar);
 	draw_layout(bar);
 	draw_window_name(bar);
@@ -1031,25 +1042,27 @@ void
 pointer_axis_discrete(void *data, struct wl_pointer *pointer,
 		      uint32_t axis, int32_t discrete)
 {
-	//TODO
-	// uint32_t i;
-	// uint32_t btn = discrete < 0 ? WheelUp : WheelDown;
+	uint32_t vol_x1, mic_x1, mic_x2;
 	Seat *seat = (Seat *)data;
-
 	if (!seat->bar)
 		return;
 
-	/*uint32_t status_x = seat->bar->width / buffer_scale - text_width(seat->bar->status.text, seat->bar->width, textpadding) / buffer_scale;
-	if (seat->pointer_x > status_x) {
-		for (i = 0; i < seat->bar->status.buttons_l; i++) {
-			if (btn == seat->bar->status.buttons[i].btn
-			    && seat->pointer_x >= status_x + textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
-			    && seat->pointer_x < status_x + textpadding + seat->bar->status.buttons[i].x2 / buffer_scale) {
-				shell_command(seat->bar->status.buttons[i].command);
-				break;
-			}
+	mic_x2 = (seat->bar->width - draw_widths.date) / buffer_scale;
+	mic_x1 = mic_x2 - draw_widths.mic / buffer_scale;
+	vol_x1 = mic_x2 - draw_widths.alsa / buffer_scale;
+	if (seat->pointer_x >= vol_x1 && seat->pointer_x <= mic_x2) {
+		if (seat->pointer_x > mic_x1) {
+			if (discrete < 0)
+				shell_command(mic_up_cmd);
+			else
+				shell_command(mic_down_cmd);
+		} else {
+			if (discrete < 0)
+				shell_command(vol_up_cmd);
+			else
+				shell_command(vol_down_cmd);
 		}
-	}*/
+	}
 }
 
 void
@@ -1397,7 +1410,7 @@ set_bottom(Bar *bar)
 }
 
 void
-shell_command(char *command)
+shell_command(char const* command)
 {
 	if (fork() == 0) {
 		setsid();
@@ -1459,9 +1472,12 @@ skip_word(char const** const cur)
 void
 stats_init(void)
 {
+	int fd1, fd2;
+	time_t t;
+	DIR *dir;
 	/* time and date */
 	tzset();
-	time_t t = time(NULL);
+	t = time(NULL);
 	localtime_r(&t, &stats.tm);
 
 	/* cpu */
@@ -1479,26 +1495,25 @@ stats_init(void)
 	stats.mem_usage = 0;
 
 	/* GPU temperature */
-	DIR *dir;
 	if (!(dir = opendir("/sys/class/hwmon/")))
 		die("Could not open directory /sys/class/hwmon/:");
 	struct dirent *de;
 	stats.gpu_hwmon_fd = -1;
 	while ((de = readdir(dir))) {
 		snprintf(sockbuf, 256, "/sys/class/hwmon/%s/name", de->d_name);
-		int fd = open(sockbuf, O_RDONLY, 0);
-		if (fd == -1)
+		fd1 = open(sockbuf, O_RDONLY, 0);
+		if (fd1 == -1)
 			continue;
-		read(fd, sockbuf, 256);
+		read(fd1, sockbuf, 256);
 		if (!strncmp(sockbuf, "amdgpu", 6)) {
 			snprintf(sockbuf, 256, "/sys/class/hwmon/%s/temp1_input", de->d_name);
-			int fd = open(sockbuf, O_RDONLY | O_CLOEXEC, 0);
-			if (fd != -1) {
-				stats.gpu_hwmon_fd = fd;
+			fd2 = open(sockbuf, O_RDONLY | O_CLOEXEC, 0);
+			if (fd2 != -1) {
+				stats.gpu_hwmon_fd = fd2;
 				break;
 			}
 		}
-		close(fd);
+		close(fd1);
 	}
 	closedir(dir);
 	if (stats.gpu_hwmon_fd == -1)
@@ -1535,10 +1550,13 @@ stats_init(void)
 	draw_widths.time = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 	snprintf(sockbuf, 256, bar_date_fmt, '0', '0', '0');
 	draw_widths.date = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
-	snprintf(sockbuf, 256, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0', '0', '0');
-	draw_widths.state = draw_widths.date + text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	snprintf(sockbuf, 256, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0');
+	draw_widths.state = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 	draw_widths.tag = text_width("0", 0xFFFFFFFFu, textpadding);
 	draw_widths.layout = text_width("000", 0xFFFFFFFFu, textpadding);
+	snprintf(sockbuf, 256, bar_alsa_fmt, 0, 0);
+	draw_widths.alsa = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	draw_widths.mic = text_width("100%", 0xFFFFFFFFu,  (textpadding * 7) / 8);
 }
 
 void
