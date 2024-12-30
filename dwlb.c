@@ -523,7 +523,7 @@ draw_alsa(Bar *bar)
 	x2 = bar->width - draw_widths.date;
 	x1 = x2 - draw_widths.alsa;
 	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1,  x2, textpadding, &inactive_color.fg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, textpadding / 2, &inactive_color.fg);
 
 	bar_free_canvas(bar, canvas, data);
 }
@@ -557,7 +557,7 @@ draw_stats(Bar *bar)
 			stats.tm.tm_min,
 			stats.tm.tm_sec);
 	draw_background(bar, canvas, 0, draw_widths.time, &time_color.bg);
-	draw_foreground(bar, canvas, sockbuf, 0, draw_widths.time, textpadding, &time_color.fg);
+	draw_foreground(bar, canvas, sockbuf, 0, draw_widths.time, textpadding / 2, &time_color.fg);
 
 	x2 = MIN(bar->width, bar->width - (draw_widths.alsa + draw_widths.date));
 	x1 = x2 - draw_widths.state;
@@ -574,12 +574,12 @@ draw_stats(Bar *bar)
 
 	x2 = bar->width;
 	x1 = MIN(bar->width, bar->width - draw_widths.date);
-	snprintf(sockbuf, 256, bar_time_fmt,
+	snprintf(sockbuf, 256, bar_date_fmt,
 		stats.tm.tm_mday,
 		stats.tm.tm_mon + 1,
 		stats.tm.tm_year + 1900);
 	draw_background(bar, canvas, x1, x2, &active_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, textpadding, &active_color.fg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, textpadding / 2, &active_color.fg);
 
 	bar_free_canvas(bar, canvas, data);
 }
@@ -1547,16 +1547,16 @@ stats_init(void)
 
 	/* precalculated sizes */
 	snprintf(sockbuf, 256, bar_time_fmt, '0', '0', '0');
-	draw_widths.time = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	draw_widths.time = text_width(sockbuf, 0xFFFFFFFFu, textpadding / 2);
 	snprintf(sockbuf, 256, bar_date_fmt, '0', '0', '0');
-	draw_widths.date = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	draw_widths.date = text_width(sockbuf, 0xFFFFFFFFu, textpadding / 2);
 	snprintf(sockbuf, 256, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0');
-	draw_widths.state = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
-	draw_widths.tag = text_width("0", 0xFFFFFFFFu, textpadding);
-	draw_widths.layout = text_width("000", 0xFFFFFFFFu, textpadding);
+	draw_widths.state =  text_width(sockbuf, 0xFFFFFFFFu, textpadding);
+	draw_widths.tag =    text_width("0",     0xFFFFFFFFu, textpadding);
+	draw_widths.layout = text_width("000",   0xFFFFFFFFu, textpadding);
 	snprintf(sockbuf, 256, bar_alsa_fmt, 0, 0);
-	draw_widths.alsa = text_width(sockbuf, 0xFFFFFFFFu, textpadding);
-	draw_widths.mic = text_width("100%", 0xFFFFFFFFu,  (textpadding * 7) / 8);
+	draw_widths.alsa = text_width(sockbuf, 0xFFFFFFFFu, textpadding / 2);
+	draw_widths.mic = text_width("100% ", 0xFFFFFFFFu, textpadding / 2);
 }
 
 void

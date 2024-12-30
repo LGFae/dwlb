@@ -26,7 +26,7 @@ static const char *fontstr[FONTCOUNT] = {
 	"SourceCodePro:style=Semibold:size=13",
 	"Symbols Nerd Font:size=14"
 };
-static const char * const bar_alsa_fmt = "%3d%% %3d%%";
+static const char * const bar_alsa_fmt = "%3d%% %3d%% ";
 static const char * const bar_time_fmt = "%02d:%02d:%02d";
 static const char * const bar_state_fmt = "󰛶%4s 󰛴%4s | 󱘾%4s 󱘻%4s | %3d°C | %3d%% | %3d%% |";
 static const char * const bar_date_fmt = "%02d-%02d-%04d";
