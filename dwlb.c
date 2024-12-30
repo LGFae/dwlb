@@ -188,6 +188,7 @@ static void output_done(void *data, struct zxdg_output_v1 *xdg_output);
 static void output_logical_size(void *data, struct zxdg_output_v1 *xdg_output, int32_t width, int32_t height);
 static void output_logical_position(void *data, struct zxdg_output_v1 *xdg_output, int32_t x, int32_t y);
 static void output_name(void *data, struct zxdg_output_v1 *xdg_output, const char *name);
+static uint64_t parse_trusted_uint64_t(char const** const cur);
 static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value);
 static void pointer_axis_discrete(void *data, struct wl_pointer *pointer, uint32_t axis, int32_t discrete);
 static void pointer_axis_source(void *data, struct wl_pointer *pointer, uint32_t axis_source);
@@ -209,6 +210,9 @@ static void set_bottom(Bar *bar);
 static void shell_command(char *command);
 static void show_bar(Bar *bar);
 static void sig_handler(int sig);
+static void skip_line(char const** const cur);
+static void skip_space(char const** const cur);
+static void skip_word(char const** const cur);
 static void stats_init(void);
 static void stats_update(void);
 static void stats_update_cpu(void);
@@ -1001,6 +1005,22 @@ output_logical_position(void *data, struct zxdg_output_v1 *xdg_output,
 {
 }
 
+uint64_t
+parse_trusted_uint64_t(char const** const cur)
+{
+	/* we use this to parse information from `/proc/`, `/sys/` and other
+	 * such interfaces. We know the input can be trusted because if those
+	 * interfaces start outputing garbage, the kernel itself is fucked, and
+	 * we have bigger problems to worry about than our silly little bar */
+	uint64_t x = 0;
+	while (**cur >= '0' && **cur <= '9') {
+		x *= 10;
+		x += (**cur) - '0';
+		++(*cur);
+	}
+	return x;
+}
+
 void
 pointer_axis(void *data, struct wl_pointer *pointer,
 	     uint32_t time, uint32_t axis, wl_fixed_t value)
@@ -1418,6 +1438,25 @@ sig_handler(int sig)
 }
 
 void
+skip_line(char const** const cur)
+{
+	while (**cur != '\n') ++(*cur);
+	++(*cur);
+}
+
+void
+skip_space(char const** const cur)
+{
+	while (**cur == ' ') ++(*cur);
+}
+
+void
+skip_word(char const** const cur)
+{
+	while (**cur != ' ') ++(*cur);
+}
+
+void
 stats_init(void)
 {
 	/* time and date */
@@ -1577,48 +1616,50 @@ stats_update_cpu(void)
 void
 stats_update_disk(void)
 {
+	char const *cur;
+	int fd;
+	DIR *dir;
+
 	stats.prev_sectors_read = stats.cur_sectors_read;
 	stats.prev_sectors_written = stats.cur_sectors_written;
-	DIR *dir;
 	if (!(dir = opendir("/sys/block")))
 		die("Could not open directory /sys/block:");
 	struct dirent *de;
 	while ((de = readdir(dir))) {
 		snprintf(sockbuf, 256, "/sys/block/%s/stat", de->d_name);
-		int fd = open(sockbuf, O_RDONLY, 0);
+		fd = open(sockbuf, O_RDONLY, 0);
 		if (fd == -1)
 			continue;
 		read(fd, sockbuf, 256);
-		char *end, *cur = sockbuf;
+		cur = sockbuf;
 
 		// completed reads
-		while (*cur == ' ') ++cur;
-		while (*cur != ' ') ++cur;
+		skip_space(&cur);
+		skip_word(&cur);
 
 		// merged reads
-		while (*cur == ' ') ++cur;
-		while (*cur != ' ') ++cur;
+		skip_space(&cur);
+		skip_word(&cur);
 
 		// sectors reads
-		while (*cur == ' ') ++cur;
-		stats.cur_sectors_read = strtoul(cur, &end, 10);
-		cur = end;
+		skip_space(&cur);
+		stats.cur_sectors_read = parse_trusted_uint64_t(&cur);
 
 		// milliseconds spent reading
-		while (*cur == ' ') ++cur;
-		while (*cur != ' ') ++cur;
+		skip_space(&cur);
+		skip_word(&cur);
 
 		// completed writes
-		while (*cur == ' ') ++cur;
-		while (*cur != ' ') ++cur;
+		skip_space(&cur);
+		skip_word(&cur);
 
 		// merged writes
-		while (*cur == ' ') ++cur;
-		while (*cur != ' ') ++cur;
+		skip_space(&cur);
+		skip_word(&cur);
 
 		// sectors writes
-		while (*cur == ' ') ++cur;
-		stats.cur_sectors_written = strtoul(cur, &end, 10);
+		skip_space(&cur);
+		stats.cur_sectors_written = parse_trusted_uint64_t(&cur);
 
 		close(fd);
 	}
@@ -1628,36 +1669,34 @@ stats_update_disk(void)
 void
 stats_update_gpu_temp(void)
 {
+	char const *cur;
+	uint64_t file_read;
 	lseek(stats.gpu_hwmon_fd, 0, SEEK_SET);
 	read(stats.gpu_hwmon_fd, sockbuf, 128);
-	uint32_t file_read = strtoul(sockbuf, NULL, 10);
+	cur = sockbuf;
+	file_read = parse_trusted_uint64_t(&cur);
 	stats.gpu_temperature = file_read / 1000;
 }
 
 void
 stats_update_mem(void)
 {
-	char *word, *cur;
+	char const *cur;
+	uint64_t total, available;
 
 	lseek(stats.proc_meminfo_fd, 10, SEEK_SET);
 	read(stats.proc_meminfo_fd, sockbuf, 128);
 
 	cur = sockbuf;
-	while (*cur == ' ') ++cur;
-	word = cur;
-	while (*cur != ' ') ++cur;
-	*cur = 0;
-	uint32_t total = strtoul(word, NULL, 10);
 
-	while (*cur != '\n') ++cur;
-	++cur;
-	while (*cur != '\n') ++cur;
-	while (*cur != ' ') ++cur;
-	while (*cur == ' ') ++cur;
-	word = cur;
-	while (*cur != ' ') ++cur;
-	*cur = 0;
-	uint32_t available = strtoul(word, NULL, 10);
+	skip_space(&cur);
+	total  = parse_trusted_uint64_t(&cur);
+
+	skip_line(&cur);
+	skip_line(&cur);
+	skip_word(&cur);
+	skip_space(&cur);
+	available  = parse_trusted_uint64_t(&cur);
 
 	stats.mem_usage = 100 - ((100 * available + total / 2) / total);
 }
@@ -1665,16 +1704,19 @@ stats_update_mem(void)
 void
 stats_update_network(void)
 {
+	char const *cur;
 	stats.prev_rx_bytes = stats.cur_rx_bytes;
 	stats.prev_tx_bytes = stats.cur_tx_bytes;
 
 	lseek(stats.net_rx_bytes_fd, 0, SEEK_SET);
 	read(stats.net_rx_bytes_fd, sockbuf, 128);
-	stats.cur_rx_bytes = strtoul(sockbuf, NULL, 10);
+	cur = sockbuf;
+	stats.cur_rx_bytes = parse_trusted_uint64_t(&cur);
 
 	lseek(stats.net_tx_bytes_fd, 0, SEEK_SET);
 	read(stats.net_tx_bytes_fd, sockbuf, 128);
-	stats.cur_tx_bytes = strtoul(sockbuf, NULL, 10);
+	cur = sockbuf;
+	stats.cur_tx_bytes = parse_trusted_uint64_t(&cur);
 }
 
 void
