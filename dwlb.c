@@ -1131,13 +1131,14 @@ pointer_enter(void *data, struct wl_pointer *pointer,
 void
 pointer_frame(void *data, struct wl_pointer *pointer)
 {
+	uint32_t x, i, vol_x1, mic_x1, mic_x2;
 	Seat *seat = (Seat *)data;
 
 	if (!seat->pointer_button || !seat->bar)
 		return;
 
-	uint32_t x = 0, i = 0;
-	x += draw_widths.time / buffer_scale;
+	x = draw_widths.time / buffer_scale;
+	i = 0;
 	do {
 		if (hide_vacant) {
 			const bool active = seat->bar->mtags & 1 << i;
@@ -1164,18 +1165,17 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, 2);
 	} else {
-		uint32_t status_x = MAX(x, seat->bar->width - draw_widths.state) / buffer_scale;
-		if (seat->pointer_x >= status_x) {
-			//TODO
-			/* Clicked on status */
-			/*for (i = 0; i < seat->bar->status.buttons_l; i++) {
-				if (seat->pointer_button == seat->bar->status.buttons[i].btn
-				    && seat->pointer_x >= status_x + textpadding + seat->bar->status.buttons[i].x1 / buffer_scale
-				    && seat->pointer_x < status_x + textpadding + seat->bar->status.buttons[i].x2 / buffer_scale) {
-					shell_command(seat->bar->status.buttons[i].command);
-					break;
-				}
-			}*/
+		mic_x2 = (seat->bar->width - draw_widths.date) / buffer_scale;
+		mic_x1 = mic_x2 - draw_widths.mic / buffer_scale;
+		vol_x1 = mic_x2 - draw_widths.alsa / buffer_scale;
+
+		if (seat->pointer_x >= vol_x1 && seat->pointer_x <= mic_x2) {
+			if (seat->pointer_button == BTN_LEFT) {
+				if (seat->pointer_x > mic_x1)
+					shell_command("amixer -q set Capture toggle");
+				else
+					shell_command("amixer -q set Master toggle");
+			}
 		}
 	}
 
