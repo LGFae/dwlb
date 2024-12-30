@@ -636,14 +636,14 @@ draw_window_name(Bar *bar)
 {
 	pixman_image_t *canvas;
 	uint32_t *data;
-	const uint32_t width = MIN(bar->width, draw_widths.state);
-	const uint32_t x = MIN(draw_widths.time + draw_widths.tag * TAGCOUNT + draw_widths.layout, bar->width - width);
+	const uint32_t x1 = draw_widths.time + draw_widths.tag * TAGCOUNT + draw_widths.layout;
+	const uint32_t x2 = MIN(bar->width, bar->width - (draw_widths.state + draw_widths.date + draw_widths.alsa));
 	const Color* const color = bar->sel ? &middle_sel_color : &middle_color;
 
 	bar_get_canvas(bar, &canvas, &data);
 
-	draw_background(bar, canvas, x, bar->width - width, &color->bg);
-	draw_foreground(bar, canvas, bar->window_title, x, bar->width - width, textpadding, &color->fg);
+	draw_background(bar, canvas, x1, x2, &color->bg);
+	draw_foreground(bar, canvas, bar->window_title, x1, x2, textpadding, &color->fg);
 
 	bar_free_canvas(bar, canvas, data);
 }
