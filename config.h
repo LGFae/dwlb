@@ -12,8 +12,8 @@
 DECLARE_COLOR(time,       HEX_COLOR(0x080410ff), HEX_COLOR(0x936dd3ee));
 DECLARE_COLOR(active,     HEX_COLOR(0x040810ff), HEX_COLOR(0x417ebaee));
 DECLARE_COLOR(occupied,   HEX_COLOR(0x040810ff), HEX_COLOR(0x417ebaee));
-DECLARE_COLOR(inactive,   HEX_COLOR(0xbbbbbbff), HEX_COLOR(0x222222ff));
-DECLARE_COLOR(urgent,     HEX_COLOR(0x222222ff), HEX_COLOR(0xeeeeeeff));
+DECLARE_COLOR(inactive,   HEX_COLOR(0xbbbbbbff), HEX_COLOR(0x0b1213c0));
+DECLARE_COLOR(urgent,     HEX_COLOR(0x0b1213c0), HEX_COLOR(0xeeeeeeff));
 DECLARE_COLOR(middle,     HEX_COLOR(0x9b9b9bff), HEX_COLOR(0x2f4e6aee));
 DECLARE_COLOR(middle_sel, HEX_COLOR(0x040810ff), HEX_COLOR(0x417ebaee));
 
