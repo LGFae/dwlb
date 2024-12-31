@@ -5,9 +5,6 @@ PREFIX ?= /usr/local
 
 all: $(BINS)
 
-config.h:
-	cp config.def.h $@
-
 clean:
 	$(RM) $(BINS) *.o *-protocol.h *-protocol.c
 

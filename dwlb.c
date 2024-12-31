@@ -87,6 +87,8 @@ typedef struct {
 	uint32_t registry_name;
 	uint32_t pointer_x, pointer_y;
 	uint32_t pointer_button;
+	uint32_t pointer_enter_serial;
+	bool on_clickable;
 
 	Bar *bar;
 
@@ -194,6 +196,7 @@ static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t seria
 static void pointer_frame(void *data, struct wl_pointer *pointer);
 static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface);
 static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y);
+static void pointer_set_image(Seat *seat, struct wl_pointer *pointer);
 static IOPrint print_io(uint64_t io_value);
 static void read_socket(void);
 static void seat_capabilities(void *data, struct wl_seat *wl_seat, uint32_t capabilities);
@@ -230,8 +233,10 @@ static struct zwlr_layer_shell_v1 *layer_shell;
 static struct zxdg_output_manager_v1 *output_manager;
 
 static struct zdwl_ipc_manager_v2 *dwl_wm;
-static struct wl_cursor_image *cursor_image;
-static struct wl_surface *cursor_surface;
+static struct wl_cursor_image *cursor_default_image = NULL;
+static struct wl_surface *cursor_default_surface = NULL;
+static struct wl_cursor_image *cursor_pointer_image = NULL;
+static struct wl_surface *cursor_pointer_surface = NULL;
 
 static struct wl_list bar_list, seat_list;
 
@@ -1098,34 +1103,41 @@ pointer_enter(void *data, struct wl_pointer *pointer,
 	      uint32_t serial, struct wl_surface *surface,
 	      wl_fixed_t surface_x, wl_fixed_t surface_y)
 {
+	Bar *bar;
 	Seat *seat = (Seat *)data;
 
 	seat->bar = NULL;
-	Bar *bar;
 	wl_list_for_each(bar, &bar_list, link) {
 		if (bar->wl_surface == surface) {
 			seat->bar = bar;
 			break;
 		}
 	}
+	seat->pointer_enter_serial = serial;
 
-	if (!cursor_image) {
+	if (!cursor_default_image) {
 		const char *size_str = getenv("XCURSOR_SIZE");
 		int size = size_str ? atoi(size_str) : 0;
 		if (size == 0)
 			size = 24;
 		struct wl_cursor_theme *cursor_theme = wl_cursor_theme_load(getenv("XCURSOR_THEME"), size * buffer_scale, shm);
-		// TODO:
-		// cursor_image = wl_cursor_theme_get_cursor(cursor_theme, "pointer")->images[0];
-		cursor_image = wl_cursor_theme_get_cursor(cursor_theme, "default")->images[0];
-		cursor_surface = wl_compositor_create_surface(compositor);
-		wl_surface_set_buffer_scale(cursor_surface, buffer_scale);
-		wl_surface_attach(cursor_surface, wl_cursor_image_get_buffer(cursor_image), 0, 0);
-		wl_surface_commit(cursor_surface);
+
+		cursor_default_image = wl_cursor_theme_get_cursor(cursor_theme, "default")->images[0];
+		cursor_default_surface = wl_compositor_create_surface(compositor);
+		wl_surface_set_buffer_scale(cursor_default_surface, buffer_scale);
+		wl_surface_attach(cursor_default_surface, wl_cursor_image_get_buffer(cursor_default_image), 0, 0);
+		wl_surface_commit(cursor_default_surface);
+
+		cursor_pointer_image = wl_cursor_theme_get_cursor(cursor_theme, "pointer")->images[0];
+		cursor_pointer_surface = wl_compositor_create_surface(compositor);
+		wl_surface_set_buffer_scale(cursor_pointer_surface, buffer_scale);
+		wl_surface_attach(cursor_pointer_surface, wl_cursor_image_get_buffer(cursor_pointer_image), 0, 0);
+		wl_surface_commit(cursor_pointer_surface);
 	}
-	wl_pointer_set_cursor(pointer, serial, cursor_surface,
-			      cursor_image->hotspot_x,
-			      cursor_image->hotspot_y);
+
+	wl_pointer_set_cursor(pointer, serial, cursor_default_surface,
+			      cursor_default_image->hotspot_x,
+			      cursor_default_image->hotspot_y);
 }
 
 void
@@ -1138,6 +1150,9 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 		return;
 
 	x = draw_widths.time / buffer_scale;
+	if (seat->pointer_x <= x)
+		return;
+
 	i = 0;
 	do {
 		if (hide_vacant) {
@@ -1189,6 +1204,7 @@ pointer_leave(void *data, struct wl_pointer *pointer,
 	Seat *seat = (Seat *)data;
 
 	seat->bar = NULL;
+	seat->on_clickable = false;
 }
 
 void
@@ -1199,6 +1215,39 @@ pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,
 
 	seat->pointer_x = wl_fixed_to_int(surface_x);
 	seat->pointer_y = wl_fixed_to_int(surface_y);
+
+	pointer_set_image(seat, pointer);
+}
+
+void
+pointer_set_image(Seat *seat, struct wl_pointer *pointer)
+{
+	uint32_t time_x, alsa_x1, alsa_x2;
+	bool in_tags_or_layout, in_alsa, on_clickable;
+
+	if (!seat->bar)
+		return;
+
+	time_x = draw_widths.time / buffer_scale;
+	alsa_x2 = (seat->bar->width - draw_widths.date) / buffer_scale;
+	alsa_x1 = alsa_x2 - draw_widths.alsa / buffer_scale;
+
+	in_tags_or_layout = seat->pointer_x > time_x &&
+		seat->pointer_x < (time_x + (draw_widths.tag * TAGCOUNT + draw_widths.layout) / buffer_scale);
+	in_alsa = seat->pointer_x >= alsa_x1 && seat->pointer_x <= alsa_x2;
+	on_clickable = in_tags_or_layout || in_alsa;
+
+	if (on_clickable && !seat->on_clickable) {
+		wl_pointer_set_cursor(pointer, seat->pointer_enter_serial, cursor_pointer_surface,
+				cursor_pointer_image->hotspot_x,
+				cursor_pointer_image->hotspot_y);
+	} else if (!on_clickable && seat->on_clickable) {
+		wl_pointer_set_cursor(pointer, seat->pointer_enter_serial, cursor_default_surface,
+				cursor_default_image->hotspot_x,
+				cursor_default_image->hotspot_y);
+	}
+
+	seat->on_clickable = on_clickable;
 }
 
 static IOPrint print_io(uint64_t io_value) {
