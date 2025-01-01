@@ -1160,7 +1160,7 @@ pointer_enter(void *data, struct wl_pointer *pointer,
 void
 pointer_frame(void *data, struct wl_pointer *pointer)
 {
-	uint32_t x, i, vol_x1, mic_x1, mic_x2;
+	uint32_t x, i, vol_x1, mic_x1, mic_x2, ram_x1, cpu_x1;
 	Seat *seat = (Seat *)data;
 
 	if (!seat->pointer_button || !seat->bar)
@@ -1199,18 +1199,30 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 	} else {
 		mic_x2 = (seat->bar->width - draw_widths.mod[m_date]) / buffer_scale;
 		vol_x1 = mic_x2 - draw_widths.mod[m_alsa] / buffer_scale;;
-		mic_x1 = (mic_x2 + vol_x1) / 2;
+		ram_x1 = vol_x1 - draw_widths.mod[m_ram] / buffer_scale;;
+		cpu_x1 = ram_x1 - draw_widths.mod[m_cpu] / buffer_scale;;
 
-		if (seat->pointer_x >= vol_x1 && seat->pointer_x <= mic_x2) {
+		if (seat->pointer_x < cpu_x1)
+			goto end;
+
+		if (seat->pointer_x > mic_x2) {
+			shell_command("/home/horus/.config/yambar/scripts/calendar.sh");
+		} else if (seat->pointer_x >= vol_x1) {
+			mic_x1 = (mic_x2 + vol_x1) / 2;
 			if (seat->pointer_button == BTN_LEFT) {
 				if (seat->pointer_x > mic_x1)
 					shell_command("amixer -q set Capture toggle");
 				else
 					shell_command("amixer -q set Master toggle");
 			}
+		} else if (seat->pointer_x >= ram_x1) {
+			shell_command("/home/horus/.config/yambar/scripts/programs-most-memory.sh");
+		} else {
+			shell_command("/home/horus/.config/yambar/scripts/cpu_info.sh");
 		}
 	}
 
+end:
 	seat->pointer_button = 0;
 }
 
@@ -1239,18 +1251,17 @@ pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,
 void
 pointer_set_image(Seat *seat, struct wl_pointer *pointer)
 {
-	uint32_t alsa_x1, alsa_x2, layout_x2;
+	uint32_t cpu_x1, layout_x2;
 	bool on_clickable;
 
 	if (!seat->bar)
 		return;
 
-	alsa_x2 = (seat->bar->width - draw_widths.mod[m_date]) / buffer_scale;
-	alsa_x1 = alsa_x2 - draw_widths.mod[m_alsa] / buffer_scale;;
 	layout_x2 = draw_widths.mod[m_time] + draw_widths.tag * TAGCOUNT + draw_widths.layout;
+	cpu_x1 = seat->bar->width - (draw_widths.mod[m_date] + draw_widths.mod[m_alsa] + draw_widths.mod[m_ram] + draw_widths.mod[m_cpu]);
 	on_clickable =
 		   (seat->pointer_x > draw_widths.mod[m_time] && seat->pointer_x <= layout_x2)
-		|| (seat->pointer_x >= alsa_x1 && seat->pointer_x <= alsa_x2);
+		|| (seat->pointer_x >= cpu_x1);
 
 	if (on_clickable && !seat->on_clickable) {
 		wl_pointer_set_cursor(pointer, seat->pointer_enter_serial, cursor_pointer_surface,
