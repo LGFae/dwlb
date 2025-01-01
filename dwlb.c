@@ -524,11 +524,11 @@ draw_alsa(Bar *bar)
 
 	bar_get_canvas(bar, &canvas, &data);
 
-	snprintf(sockbuf, 256, bar_alsa_fmt, alsa_get_pplayback(), alsa_get_pcapture());
+	snprintf(sockbuf, 256, bar_fmt_alsa, alsa_get_pplayback(), alsa_get_pcapture());
 	x2 = bar->width - draw_widths.date;
 	x1 = x2 - draw_widths.alsa;
 	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, textpadding / 2, &inactive_color.fg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, ALSA_PAD, &inactive_color.fg);
 
 	bar_free_canvas(bar, canvas, data);
 }
@@ -557,16 +557,16 @@ draw_stats(Bar *bar)
 
 	bar_get_canvas(bar, &canvas, &data);
 
-	snprintf(sockbuf, 256, bar_time_fmt,
+	snprintf(sockbuf, 256, bar_fmt_time,
 			stats.tm.tm_hour,
 			stats.tm.tm_min,
 			stats.tm.tm_sec);
 	draw_background(bar, canvas, 0, draw_widths.time, &time_color.bg);
-	draw_foreground(bar, canvas, sockbuf, 0, draw_widths.time, textpadding / 2, &time_color.fg);
+	draw_foreground(bar, canvas, sockbuf, 0, draw_widths.time, TIME_PAD, &time_color.fg);
 
 	x2 = MIN(bar->width, bar->width - (draw_widths.alsa + draw_widths.date));
 	x1 = x2 - draw_widths.state;
-	snprintf(sockbuf, 256, bar_state_fmt,
+	snprintf(sockbuf, 256, bar_fmt_state,
 			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
 			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
 			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
@@ -575,16 +575,16 @@ draw_stats(Bar *bar)
 			stats.cpu_usage,
 			stats.mem_usage);
 	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, textpadding, &inactive_color.fg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
 
 	x2 = bar->width;
 	x1 = MIN(bar->width, bar->width - draw_widths.date);
-	snprintf(sockbuf, 256, bar_date_fmt,
+	snprintf(sockbuf, 256, bar_fmt_date,
 		stats.tm.tm_mday,
 		stats.tm.tm_mon + 1,
 		stats.tm.tm_year + 1900);
 	draw_background(bar, canvas, x1, x2, &active_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, textpadding / 2, &active_color.fg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, DATE_PAD, &active_color.fg);
 
 	bar_free_canvas(bar, canvas, data);
 }
@@ -1595,17 +1595,17 @@ stats_init(void)
 	alsa_init();
 
 	/* precalculated sizes */
-	snprintf(sockbuf, 256, bar_time_fmt, '0', '0', '0');
-	draw_widths.time = text_width(sockbuf, 0xFFFFFFFFu, textpadding / 2);
-	snprintf(sockbuf, 256, bar_date_fmt, '0', '0', '0');
-	draw_widths.date = text_width(sockbuf, 0xFFFFFFFFu, textpadding / 2);
-	snprintf(sockbuf, 256, bar_state_fmt, "0", "0", "0", "0", '0', '0', '0');
+	snprintf(sockbuf, 256, bar_fmt_time, '0', '0', '0');
+	draw_widths.time = text_width(sockbuf, 0xFFFFFFFFu, TIME_PAD);
+	snprintf(sockbuf, 256, bar_fmt_date, '0', '0', '0');
+	draw_widths.date = text_width(sockbuf, 0xFFFFFFFFu, DATE_PAD);
+	snprintf(sockbuf, 256, bar_fmt_state, "0", "0", "0", "0", '0', '0', '0');
 	draw_widths.state =  text_width(sockbuf, 0xFFFFFFFFu, textpadding);
 	draw_widths.tag =    text_width("0",     0xFFFFFFFFu, textpadding);
 	draw_widths.layout = text_width("000",   0xFFFFFFFFu, textpadding);
-	snprintf(sockbuf, 256, bar_alsa_fmt, 0, 0);
-	draw_widths.alsa = text_width(sockbuf, 0xFFFFFFFFu, textpadding / 2);
-	draw_widths.mic = text_width("100% ", 0xFFFFFFFFu, textpadding / 2);
+	snprintf(sockbuf, 256, bar_fmt_alsa, 0, 0);
+	draw_widths.alsa = text_width(sockbuf, 0xFFFFFFFFu, ALSA_PAD);
+	draw_widths.mic = text_width("100% ", 0xFFFFFFFFu, ALSA_PAD);
 }
 
 void

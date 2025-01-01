@@ -26,10 +26,16 @@ static const char *fontstr[FONTCOUNT] = {
 	"SourceCodePro:style=Semibold:size=13",
 	"Symbols Nerd Font:size=14"
 };
-static const char * const bar_alsa_fmt = "%3d%% %3d%% ";
-static const char * const bar_time_fmt = "%02d:%02d:%02d";
-static const char * const bar_state_fmt = "󰛶%4s 󰛴%4s | 󱘾%4s 󱘻%4s | %3d°C | %3d%% | %3d%% |";
-static const char * const bar_date_fmt = "%02d-%02d-%04d";
+
+static const char * const bar_fmt_alsa = "%3d%% %3d%% ";
+static const char * const bar_fmt_time = "%02d:%02d:%02d";
+static const char * const bar_fmt_state = "󰛶%4s 󰛴%4s | 󱘾%4s 󱘻%4s | %3d°C | %3d%% | %3d%% |";
+static const char * const bar_fmt_date = "%02d-%02d-%04d";
+
+#define ALSA_PAD  (textpadding / 2)
+#define TIME_PAD  (textpadding / 2)
+#define STATE_PAD (textpadding)
+#define DATE_PAD  (textpadding / 2)
 
 static const char* const vol_up_cmd =   "amixer -q set Master 1%+";
 static const char* const vol_down_cmd = "amixer -q set Master 1%-";
