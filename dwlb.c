@@ -54,6 +54,11 @@ typedef struct {
 } Color;
 
 typedef struct {
+	uint32_t x1;
+	uint32_t x2;
+} DrawArea;
+
+typedef struct {
 	struct wl_output *wl_output;
 	struct wl_surface *wl_surface;
 	struct zwlr_layer_surface_v1 *layer_surface;
@@ -132,16 +137,6 @@ typedef struct {
 	/* time and date */
 	struct tm tm;
 } Stats;
-
-typedef struct {
-	uint32_t alsa;
-	uint32_t mic;
-	uint32_t time;
-	uint32_t date;
-	uint32_t state;
-	uint32_t tag;
-	uint32_t layout;
-} DrawWidths;
 
 static void alsa_init(void);
 static uint8_t alsa_get_pcapture(void);
@@ -246,7 +241,6 @@ static uint32_t height, textpadding;
 static bool run_display;
 
 static Stats stats;
-static DrawWidths draw_widths;
 
 static const struct wl_buffer_listener wl_buffer_listener = {
 	.release = wl_buffer_release,
@@ -308,6 +302,11 @@ static const struct wl_registry_listener registry_listener = {
 
 
 #include "config.h"
+static struct {
+	uint32_t mod[m_TOTAL];
+	uint32_t layout;
+	uint32_t tag;
+} draw_widths;
 
 void
 alsa_init(void)
@@ -524,9 +523,9 @@ draw_alsa(Bar *bar)
 
 	bar_get_canvas(bar, &canvas, &data);
 
-	snprintf(sockbuf, 256, bar_fmt_alsa, alsa_get_pplayback(), alsa_get_pcapture());
-	x2 = bar->width - draw_widths.date;
-	x1 = x2 - draw_widths.alsa;
+	snprintf(sockbuf, 256, mod_fmt[m_alsa], alsa_get_pplayback(), alsa_get_pcapture());
+	x2 = bar->width - draw_widths.mod[m_date];;
+	x1 = x2 - draw_widths.mod[m_alsa];
 	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
 	draw_foreground(bar, canvas, sockbuf, x1, x2, ALSA_PAD, &inactive_color.fg);
 
@@ -538,13 +537,13 @@ draw_layout(Bar *bar)
 {
 	pixman_image_t *canvas;
 	uint32_t *data;
-	const uint32_t x = draw_widths.time + draw_widths.tag * TAGCOUNT;
+	const uint32_t x1 = draw_widths.tag * TAGCOUNT + draw_widths.mod[m_time];
+	const uint32_t x2 = x1 + draw_widths.layout;
 
 	bar_get_canvas(bar, &canvas, &data);
 
-	draw_background(bar, canvas, x, x + draw_widths.layout, &inactive_color.bg);
-	draw_foreground(bar, canvas, bar->layout, x, x + draw_widths.layout,
-			textpadding, &inactive_color.fg);
+	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
+	draw_foreground(bar, canvas, bar->layout, x1, x2, textpadding, &inactive_color.fg);
 
 	bar_free_canvas(bar, canvas, data);
 }
@@ -557,34 +556,57 @@ draw_stats(Bar *bar)
 
 	bar_get_canvas(bar, &canvas, &data);
 
-	snprintf(sockbuf, 256, bar_fmt_time,
+	snprintf(sockbuf, 256, mod_fmt[m_time],
 			stats.tm.tm_hour,
 			stats.tm.tm_min,
 			stats.tm.tm_sec);
-	draw_background(bar, canvas, 0, draw_widths.time, &time_color.bg);
-	draw_foreground(bar, canvas, sockbuf, 0, draw_widths.time, TIME_PAD, &time_color.fg);
+	x1 = 0;
+	x2 = x1 + draw_widths.mod[m_time];
+	draw_background(bar, canvas, x1, x2, &time_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, TIME_PAD, &time_color.fg);
 
-	x2 = MIN(bar->width, bar->width - (draw_widths.alsa + draw_widths.date));
-	x1 = x2 - draw_widths.state;
-	snprintf(sockbuf, 256, bar_fmt_state,
-			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
-			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str,
-			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
-			print_io((stats.cur_sectors_written - stats.prev_sectors_written) * 512).str,
-			stats.gpu_temperature,
-			stats.cpu_usage,
-			stats.mem_usage);
-	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
-
-	x2 = bar->width;
-	x1 = MIN(bar->width, bar->width - draw_widths.date);
-	snprintf(sockbuf, 256, bar_fmt_date,
+	snprintf(sockbuf, 256, mod_fmt[m_date],
 		stats.tm.tm_mday,
 		stats.tm.tm_mon + 1,
 		stats.tm.tm_year + 1900);
+	x2 = bar->width;
+	x1 = x2 - draw_widths.mod[m_date];
 	draw_background(bar, canvas, x1, x2, &active_color.bg);
 	draw_foreground(bar, canvas, sockbuf, x1, x2, DATE_PAD, &active_color.fg);
+
+	snprintf(sockbuf, 256, mod_fmt[m_ram], stats.mem_usage);
+	x2 = x1 - draw_widths.mod[m_alsa];
+	x1 = x2 - draw_widths.mod[m_ram];
+	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
+
+	snprintf(sockbuf, 256, mod_fmt[m_cpu], stats.cpu_usage);
+	x2 = x1;
+	x1 = x2 - draw_widths.mod[m_cpu];
+	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
+
+	snprintf(sockbuf, 256, mod_fmt[m_temp], stats.gpu_temperature);
+	x2 = x1;
+	x1 = x2 - draw_widths.mod[m_temp];
+	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
+
+	snprintf(sockbuf, 256, mod_fmt[m_disk], 
+			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
+			print_io((stats.cur_sectors_written - stats.prev_sectors_written) * 512).str);
+	x2 = x1;
+	x1 = x2 - draw_widths.mod[m_disk];
+	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
+
+	snprintf(sockbuf, 256, mod_fmt[m_net], 
+			print_io(stats.cur_tx_bytes - stats.prev_tx_bytes).str,
+			print_io(stats.cur_rx_bytes - stats.prev_rx_bytes).str);
+	x2 = x1;
+	x1 = x2 - draw_widths.mod[m_net];
+	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
 
 	bar_free_canvas(bar, canvas, data);
 }
@@ -593,7 +615,7 @@ void
 draw_tags(Bar *bar)
 {
 	pixman_image_t *canvas;
-	uint32_t *data, x, boxs, boxw, i;
+	uint32_t *data, x1, x2, boxs, boxw, i;
 	bool active, occupied, urgent;
 	Color const *color;
 
@@ -609,16 +631,17 @@ draw_tags(Bar *bar)
 		if (hide_vacant && !active && !occupied && !urgent)
 			continue;
 
-		x = draw_widths.time + draw_widths.tag * i;
+		x1 = draw_widths.mod[m_time] + draw_widths.tag * i;
+		x2 = x1 + draw_widths.tag;
 		color = urgent ? &urgent_color : (active ? &active_color : (occupied ? &occupied_color : &inactive_color));
-		draw_background(bar, canvas, x, x + draw_widths.tag, &color->bg);
-		draw_foreground(bar, canvas, &tags[i * 2], x, x + draw_widths.tag, textpadding, &color->fg);
+		draw_background(bar, canvas, x1, x2, &color->bg);
+		draw_foreground(bar, canvas, &tags[i * 2], x1, x2, textpadding, &color->fg);
 
 		if (!hide_vacant && occupied) {
 			pixman_image_fill_boxes(PIXMAN_OP_OVER,
 					canvas, &color->fg, 1,
 					&(pixman_box32_t){
-						.x1 = x + boxs, .x2 = x + boxs + boxw,
+						.x1 = x1 + boxs, .x2 = x1 + boxs + boxw,
 						.y1 = boxs, .y2 = boxs + boxw
 					});
 			if ((!bar->sel || !active) && boxw >= 3) {
@@ -626,7 +649,7 @@ draw_tags(Bar *bar)
 				pixman_image_fill_boxes(PIXMAN_OP_SRC,
 						canvas, &color->bg, 1,
 						&(pixman_box32_t){
-							.x1 = x + boxs + 1, .x2 = x + boxs + boxw - 1,
+							.x1 = x1 + boxs + 1, .x2 = x1 + boxs + boxw - 1,
 							.y1 = boxs + 1, .y2 = boxs + boxw - 1
 						});
 			}
@@ -640,10 +663,14 @@ void
 draw_window_name(Bar *bar)
 {
 	pixman_image_t *canvas;
-	uint32_t *data;
-	const uint32_t x1 = draw_widths.time + draw_widths.tag * TAGCOUNT + draw_widths.layout;
-	const uint32_t x2 = MIN(bar->width, bar->width - (draw_widths.state + draw_widths.date + draw_widths.alsa));
+	uint32_t *data, x2, width;
+	const uint32_t x1 = draw_widths.mod[m_time] + draw_widths.tag * TAGCOUNT + draw_widths.layout;
 	const Color* const color = bar->sel ? &middle_sel_color : &middle_color;
+
+	width = 0;
+	for (int i = 1; i < m_TOTAL; ++i)
+		width += draw_widths.mod[i];
+	x2 = bar->width - width;
 
 	bar_get_canvas(bar, &canvas, &data);
 
@@ -945,8 +972,6 @@ void
 layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 			uint32_t serial, uint32_t w, uint32_t h)
 {
-	uint32_t *canvas_data;
-	pixman_image_t *canvas;
 	Bar *bar;
 
 	w = w * buffer_scale;
@@ -964,14 +989,6 @@ layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 	bar->stride = bar->width * 4;
 	expand_shm_file(bar, bar->stride * bar->height);
 
-	bar_get_canvas(bar, &canvas, &canvas_data);
-	draw_background(
-			bar,
-			canvas,
-			draw_widths.time,
-			bar->width - draw_widths.state,
-			bar->sel ? &middle_sel_color.bg : &middle_color.bg);
-	bar_free_canvas(bar, canvas, canvas_data);
 	bar->configured = true;
 
 	draw_alsa(bar);
@@ -1052,9 +1069,9 @@ pointer_axis_discrete(void *data, struct wl_pointer *pointer,
 	if (!seat->bar)
 		return;
 
-	mic_x2 = (seat->bar->width - draw_widths.date) / buffer_scale;
-	mic_x1 = mic_x2 - draw_widths.mic / buffer_scale;
-	vol_x1 = mic_x2 - draw_widths.alsa / buffer_scale;
+	mic_x2 = (seat->bar->width - draw_widths.mod[m_date]) / buffer_scale;
+	vol_x1 = mic_x2 - draw_widths.mod[m_alsa] / buffer_scale;;
+	mic_x1 = (mic_x2 + vol_x1) / 2;
 	if (seat->pointer_x >= vol_x1 && seat->pointer_x <= mic_x2) {
 		if (seat->pointer_x > mic_x1) {
 			if (discrete < 0)
@@ -1149,7 +1166,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 	if (!seat->pointer_button || !seat->bar)
 		return;
 
-	x = draw_widths.time / buffer_scale;
+	x = draw_widths.mod[m_time] / buffer_scale;
 	if (seat->pointer_x <= x)
 		return;
 
@@ -1173,16 +1190,16 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, ~0, 1);
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, seat->bar->mtags ^ (1 << i), 0);
-	} else if (seat->pointer_x < (x += draw_widths.layout)) {
+	} else if (seat->pointer_x < x + draw_widths.layout) {
 		/* Clicked on layout */
 		if (seat->pointer_button == BTN_LEFT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, seat->bar->last_layout_idx);
 		else if (seat->pointer_button == BTN_RIGHT)
 			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, 2);
 	} else {
-		mic_x2 = (seat->bar->width - draw_widths.date) / buffer_scale;
-		mic_x1 = mic_x2 - draw_widths.mic / buffer_scale;
-		vol_x1 = mic_x2 - draw_widths.alsa / buffer_scale;
+		mic_x2 = (seat->bar->width - draw_widths.mod[m_date]) / buffer_scale;
+		vol_x1 = mic_x2 - draw_widths.mod[m_alsa] / buffer_scale;;
+		mic_x1 = (mic_x2 + vol_x1) / 2;
 
 		if (seat->pointer_x >= vol_x1 && seat->pointer_x <= mic_x2) {
 			if (seat->pointer_button == BTN_LEFT) {
@@ -1222,20 +1239,18 @@ pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,
 void
 pointer_set_image(Seat *seat, struct wl_pointer *pointer)
 {
-	uint32_t time_x, alsa_x1, alsa_x2;
-	bool in_tags_or_layout, in_alsa, on_clickable;
+	uint32_t alsa_x1, alsa_x2, layout_x2;
+	bool on_clickable;
 
 	if (!seat->bar)
 		return;
 
-	time_x = draw_widths.time / buffer_scale;
-	alsa_x2 = (seat->bar->width - draw_widths.date) / buffer_scale;
-	alsa_x1 = alsa_x2 - draw_widths.alsa / buffer_scale;
-
-	in_tags_or_layout = seat->pointer_x > time_x &&
-		seat->pointer_x < (time_x + (draw_widths.tag * TAGCOUNT + draw_widths.layout) / buffer_scale);
-	in_alsa = seat->pointer_x >= alsa_x1 && seat->pointer_x <= alsa_x2;
-	on_clickable = in_tags_or_layout || in_alsa;
+	alsa_x2 = (seat->bar->width - draw_widths.mod[m_date]) / buffer_scale;
+	alsa_x1 = alsa_x2 - draw_widths.mod[m_alsa] / buffer_scale;;
+	layout_x2 = draw_widths.mod[m_time] + draw_widths.tag * TAGCOUNT + draw_widths.layout;
+	on_clickable =
+		   (seat->pointer_x > draw_widths.mod[m_time] && seat->pointer_x <= layout_x2)
+		|| (seat->pointer_x >= alsa_x1 && seat->pointer_x <= alsa_x2);
 
 	if (on_clickable && !seat->on_clickable) {
 		wl_pointer_set_cursor(pointer, seat->pointer_enter_serial, cursor_pointer_surface,
@@ -1594,18 +1609,32 @@ stats_init(void)
 	/* ALSA */
 	alsa_init();
 
-	/* precalculated sizes */
-	snprintf(sockbuf, 256, bar_fmt_time, '0', '0', '0');
-	draw_widths.time = text_width(sockbuf, 0xFFFFFFFFu, TIME_PAD);
-	snprintf(sockbuf, 256, bar_fmt_date, '0', '0', '0');
-	draw_widths.date = text_width(sockbuf, 0xFFFFFFFFu, DATE_PAD);
-	snprintf(sockbuf, 256, bar_fmt_state, "0", "0", "0", "0", '0', '0', '0');
-	draw_widths.state =  text_width(sockbuf, 0xFFFFFFFFu, textpadding);
-	draw_widths.tag =    text_width("0",     0xFFFFFFFFu, textpadding);
-	draw_widths.layout = text_width("000",   0xFFFFFFFFu, textpadding);
-	snprintf(sockbuf, 256, bar_fmt_alsa, 0, 0);
-	draw_widths.alsa = text_width(sockbuf, 0xFFFFFFFFu, ALSA_PAD);
-	draw_widths.mic = text_width("100% ", 0xFFFFFFFFu, ALSA_PAD);
+	snprintf(sockbuf, 256, mod_fmt[m_time], '0', '0', '0');
+	draw_widths.mod[m_time] = text_width(sockbuf, 0xFFFFFFFFu, TIME_PAD);
+
+	snprintf(sockbuf, 256, mod_fmt[m_date], '0', '0', '0');
+	draw_widths.mod[m_date] = text_width(sockbuf, 0xFFFFFFFFu, DATE_PAD);;
+
+	snprintf(sockbuf, 256, mod_fmt[m_alsa], '0', '0');
+	draw_widths.mod[m_alsa] = text_width(sockbuf, 0xFFFFFFFFu, STATE_PAD);
+
+	snprintf(sockbuf, 256, mod_fmt[m_ram], '0');
+	draw_widths.mod[m_ram] = text_width(sockbuf, 0xFFFFFFFFu, STATE_PAD);
+
+	snprintf(sockbuf, 256, mod_fmt[m_cpu], '0');
+	draw_widths.mod[m_cpu] = text_width(sockbuf, 0xFFFFFFFFu, STATE_PAD);
+
+	snprintf(sockbuf, 256, mod_fmt[m_temp], '0');
+	draw_widths.mod[m_temp] = text_width(sockbuf, 0xFFFFFFFFu, STATE_PAD);
+
+	snprintf(sockbuf, 256, mod_fmt[m_disk], "0", "0");
+	draw_widths.mod[m_disk] = text_width(sockbuf, 0xFFFFFFFFu, STATE_PAD);
+
+	snprintf(sockbuf, 256, mod_fmt[m_net], "0", "0");
+	draw_widths.mod[m_net] = text_width(sockbuf, 0xFFFFFFFFu, STATE_PAD);
+
+	draw_widths.tag = text_width("0", 0xFFFFFFFFu, textpadding);
+	draw_widths.layout = text_width("[]=", 0xFFFFFFFFu, textpadding);
 }
 
 void

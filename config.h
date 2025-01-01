@@ -27,10 +27,29 @@ static const char *fontstr[FONTCOUNT] = {
 	"Symbols Nerd Font:size=14"
 };
 
-static const char * const bar_fmt_alsa = "%3d%% %3d%% ";
-static const char * const bar_fmt_time = "%02d:%02d:%02d";
-static const char * const bar_fmt_state = "󰛶%4s 󰛴%4s | 󱘾%4s 󱘻%4s | %3d°C | %3d%% | %3d%% |";
-static const char * const bar_fmt_date = "%02d-%02d-%04d";
+enum Modules {
+	m_time,
+	m_net,
+	m_disk,
+	m_temp,
+	m_cpu,
+	m_ram,
+	m_alsa,
+	m_date,
+
+	m_TOTAL,
+};
+
+static const char * const mod_fmt[m_TOTAL] = {
+	"%02d:%02d:%02d",
+	"󰛶%4s 󰛴%4s",
+	"󱘾%4s 󱘻%4s",
+	"%3d°C",
+	"%3d%%",
+	"%3d%%",
+	"%3d%% %3d%%",
+	"%02d-%02d-%04d",
+};
 
 #define ALSA_PAD  (textpadding / 2)
 #define TIME_PAD  (textpadding / 2)
