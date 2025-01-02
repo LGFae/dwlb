@@ -33,17 +33,17 @@ wlr-layer-shell-unstable-v1-protocol.c:
 	$(WAYLAND_SCANNER) private-code protocols/wlr-layer-shell-unstable-v1.xml $@
 wlr-layer-shell-unstable-v1-protocol.o: wlr-layer-shell-unstable-v1-protocol.h
 
-dwl-ipc-unstable-v2-protocol.h:
-	$(WAYLAND_SCANNER) client-header protocols/dwl-ipc-unstable-v2.xml $@
-dwl-ipc-unstable-v2-protocol.c:
-	$(WAYLAND_SCANNER) private-code protocols/dwl-ipc-unstable-v2.xml $@
-dwl-ipc-unstable-v2-protocol.o: dwl-ipc-unstable-v2-protocol.h
+river-status-unstable-v1-protocol.h:
+	$(WAYLAND_SCANNER) client-header protocols/river-status-unstable-v1.xml $@
+river-status-unstable-v1-protocol.c:
+	$(WAYLAND_SCANNER) private-code protocols/river-status-unstable-v1.xml $@
+river-status-unstable-v1-protocol.o: river-status-unstable-v1-protocol.h
 
-dwlb.o: utf8.h config.h xdg-shell-protocol.h xdg-output-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h dwl-ipc-unstable-v2-protocol.h commands.h
+dwlb.o: utf8.h config.h xdg-shell-protocol.h xdg-output-unstable-v1-protocol.h wlr-layer-shell-unstable-v1-protocol.h river-status-unstable-v1-protocol.h commands.h
 dwlb-ctl.o: commands.h
 
 # Protocol dependencies
-dwlb: dwlb.o xdg-shell-protocol.o xdg-output-unstable-v1-protocol.o wlr-layer-shell-unstable-v1-protocol.o dwl-ipc-unstable-v2-protocol.o
+dwlb: dwlb.o xdg-shell-protocol.o xdg-output-unstable-v1-protocol.o wlr-layer-shell-unstable-v1-protocol.o river-status-unstable-v1-protocol.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $(LDLIBS) -o $@ $^
 
 dwlb-ctl: dwlb-ctl.o

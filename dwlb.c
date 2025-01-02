@@ -30,7 +30,7 @@
 #include "xdg-shell-protocol.h"
 #include "xdg-output-unstable-v1-protocol.h"
 #include "wlr-layer-shell-unstable-v1-protocol.h"
-#include "dwl-ipc-unstable-v2-protocol.h"
+#include "river-status-unstable-v1-protocol.h"
 
 #define MIN(a, b)	((a) < (b) ? (a) : (b))
 #define MAX(a, b)	((a) > (b) ? (a) : (b))
@@ -63,7 +63,7 @@ typedef struct {
 	struct wl_surface *wl_surface;
 	struct zwlr_layer_surface_v1 *layer_surface;
 	struct zxdg_output_v1 *xdg_output;
-	struct zdwl_ipc_output_v2 *dwl_wm_output;
+	struct zriver_output_status_v1 *river_output;
 
 	struct wl_list link;
 
@@ -75,7 +75,7 @@ typedef struct {
 	uint32_t width, height;
 	uint32_t stride, bufsize;
 
-	uint32_t mtags, ctags, urg;
+	uint32_t ftags, otags, urg;
 	uint32_t layout_idx, last_layout_idx;
 
 	int shm_fd;
@@ -88,6 +88,7 @@ typedef struct {
 typedef struct {
 	struct wl_seat *wl_seat;
 	struct wl_pointer *wl_pointer;
+	struct zriver_seat_status_v1 *river_seat;
 
 	uint32_t registry_name;
 	uint32_t pointer_x, pointer_y;
@@ -154,19 +155,6 @@ static void draw_stats(Bar *bar);
 static void draw_tags(Bar *bar);
 static void draw_window_name(Bar *bar);
 static void draw_frame(Bar *bar);
-static void dwl_wm_layout(void *data, struct zdwl_ipc_manager_v2 *dwl_wm, const char *name);
-static void dwl_wm_output_toggle_visibility(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output);
-static void dwl_wm_output_active(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, uint32_t active);
-static void dwl_wm_output_tag(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
-		uint32_t tag, uint32_t state, uint32_t clients, uint32_t focused);
-static void dwl_wm_output_layout(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, uint32_t layout);
-static void dwl_wm_output_title(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, const char *title);
-static void dwl_wm_output_appid(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, const char *appid);
-static void dwl_wm_output_layout_symbol(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, const char *layout);
-static void dwl_wm_output_frame(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output);
-static void dwl_wm_output_fullscreen(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, uint32_t is_fullscreen);
-static void dwl_wm_output_floating(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output, uint32_t is_floating);
-static void dwl_wm_tags(void *data, struct zdwl_ipc_manager_v2 *dwl_wm, uint32_t amount);
 static void event_loop(void);
 static void expand_shm_file(Bar* bar, size_t size);
 static void handle_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version);
@@ -194,6 +182,15 @@ static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time
 static void pointer_set_image(Seat *seat, struct wl_pointer *pointer);
 static IOPrint print_io(uint64_t io_value);
 static void read_socket(void);
+static void river_focused_output(void *data, struct zriver_seat_status_v1 *zriver_seat_status_v1, struct wl_output *output);
+static void river_focused_tags(void *data, struct zriver_output_status_v1 *zriver_output_status_v1, uint32_t tags);
+static void river_focused_view(void *data, struct zriver_seat_status_v1 *zriver_seat_status_v1, const char *title);
+static void river_layout_name(void *data, struct zriver_output_status_v1 *zriver_output_status_v1, const char *name);
+static void river_layout_name_clear(void *data, struct zriver_output_status_v1 *zriver_output_status_v1);
+static void river_mode(void *data, struct zriver_seat_status_v1 *zriver_seat_status_v1, const char *name);
+static void river_unfocused_output(void *data, struct zriver_seat_status_v1 *zriver_seat_status_v1, struct wl_output *output);
+static void river_urgent_tags(void *data, struct zriver_output_status_v1 *zriver_output_status_v1, uint32_t tags);
+static void river_view_tags(void *data, struct zriver_output_status_v1 *zriver_output_status_v1, struct wl_array *tags);
 static void seat_capabilities(void *data, struct wl_seat *wl_seat, uint32_t capabilities);
 static void seat_name(void *data, struct wl_seat *wl_seat, const char *name);
 static void setup_bar(Bar *bar);
@@ -227,7 +224,7 @@ static struct wl_shm *shm;
 static struct zwlr_layer_shell_v1 *layer_shell;
 static struct zxdg_output_manager_v1 *output_manager;
 
-static struct zdwl_ipc_manager_v2 *dwl_wm;
+static struct zriver_status_manager_v1 *river_status = NULL;
 static struct wl_cursor_image *cursor_default_image = NULL;
 static struct wl_surface *cursor_default_surface = NULL;
 static struct wl_cursor_image *cursor_pointer_image = NULL;
@@ -277,22 +274,19 @@ static const struct wl_seat_listener seat_listener = {
 	.name = seat_name,
 };
 
-static const struct zdwl_ipc_manager_v2_listener dwl_wm_listener = {
-	.tags = dwl_wm_tags,
-	.layout = dwl_wm_layout
+static const struct zriver_seat_status_v1_listener river_seat_listener = {
+	.focused_output = river_focused_output,
+	.unfocused_output = river_unfocused_output,
+	.focused_view = river_focused_view,
+	.mode = river_mode,
 };
 
-static const struct zdwl_ipc_output_v2_listener dwl_wm_output_listener = {
-	.toggle_visibility = dwl_wm_output_toggle_visibility,
-	.active = dwl_wm_output_active,
-	.tag = dwl_wm_output_tag,
-	.layout = dwl_wm_output_layout,
-	.title = dwl_wm_output_title,
-	.appid = dwl_wm_output_appid,
-	.layout_symbol = dwl_wm_output_layout_symbol,
-	.frame = dwl_wm_output_frame,
-	.fullscreen = dwl_wm_output_fullscreen,
-	.floating = dwl_wm_output_floating
+static const struct zriver_output_status_v1_listener river_output_listener = {
+	.focused_tags = river_focused_tags,
+	.view_tags = river_view_tags,
+	.urgent_tags = river_urgent_tags,
+	.layout_name = river_layout_name,
+	.layout_name_clear = river_layout_name_clear,
 };
 
 static const struct wl_registry_listener registry_listener = {
@@ -614,9 +608,11 @@ draw_stats(Bar *bar)
 void
 draw_tags(Bar *bar)
 {
+	if (!bar->configured)
+		return;
 	pixman_image_t *canvas;
 	uint32_t *data, x1, x2, boxs, boxw, i;
-	bool active, occupied, urgent;
+	bool focused, occupied, urgent;
 	Color const *color;
 
 	bar_get_canvas(bar, &canvas, &data);
@@ -624,16 +620,16 @@ draw_tags(Bar *bar)
 	boxs = font->height / 9;
 	boxw = font->height / 6 + 2;
 	for (i = 0; i < TAGCOUNT; ++i) {
-		active   = bar->mtags & 1 << i;
-		occupied = bar->ctags & 1 << i;
+		focused  = bar->ftags & 1 << i;
+		occupied = bar->otags & 1 << i;
 		urgent   = bar->urg   & 1 << i;
 
-		if (hide_vacant && !active && !occupied && !urgent)
+		if (hide_vacant && !focused && !occupied && !urgent)
 			continue;
 
 		x1 = draw_widths.mod[m_time] + draw_widths.tag * i;
 		x2 = x1 + draw_widths.tag;
-		color = urgent ? &urgent_color : (active ? &active_color : (occupied ? &occupied_color : &inactive_color));
+		color = urgent ? &urgent_color : (focused ? &active_color : (occupied ? &occupied_color : &inactive_color));
 		draw_background(bar, canvas, x1, x2, &color->bg);
 		draw_foreground(bar, canvas, &tags[i * 2], x1, x2, textpadding, &color->fg);
 
@@ -644,15 +640,6 @@ draw_tags(Bar *bar)
 						.x1 = x1 + boxs, .x2 = x1 + boxs + boxw,
 						.y1 = boxs, .y2 = boxs + boxw
 					});
-			if ((!bar->sel || !active) && boxw >= 3) {
-				/* Make box hollow */
-				pixman_image_fill_boxes(PIXMAN_OP_SRC,
-						canvas, &color->bg, 1,
-						&(pixman_box32_t){
-							.x1 = x1 + boxs + 1, .x2 = x1 + boxs + boxw - 1,
-							.y1 = boxs + 1, .y2 = boxs + boxw - 1
-						});
-			}
 		}
 	}
 
@@ -691,124 +678,6 @@ draw_frame(Bar *bar)
 	wl_surface_attach(bar->wl_surface, buffer, 0, 0);
 	wl_surface_damage_buffer(bar->wl_surface, 0, 0, bar->width, bar->height);
 	wl_surface_commit(bar->wl_surface);
-}
-
-void
-dwl_wm_layout(void *data, struct zdwl_ipc_manager_v2 *dwl_wm,
-	const char *name)
-{
-	// these are allocated statically in config.h
-}
-
-void
-dwl_wm_output_toggle_visibility(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output)
-{
-	Bar *bar = (Bar *)data;
-
-	if (bar->hidden)
-		show_bar(bar);
-	else
-		hide_bar(bar);
-}
-
-void
-dwl_wm_output_active(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
-	uint32_t active)
-{
-	Bar *bar = (Bar *)data;
-	bar->sel = true;
-}
-
-void
-dwl_wm_output_tag(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
-	uint32_t tag, uint32_t state, uint32_t clients, uint32_t focused)
-{
-	Bar *bar = (Bar *)data;
-
-	if (state & ZDWL_IPC_OUTPUT_V2_TAG_STATE_ACTIVE)
-		bar->mtags |= 1 << tag;
-	else
-		bar->mtags &= ~(1 << tag);
-	if (clients > 0)
-		bar->ctags |= 1 << tag;
-	else
-		bar->ctags &= ~(1 << tag);
-	if (state & ZDWL_IPC_OUTPUT_V2_TAG_STATE_URGENT)
-		bar->urg |= 1 << tag;
-	else
-		bar->urg &= ~(1 << tag);
-
-	bar->redraw_tags = true;
-}
-
-void
-dwl_wm_output_layout(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
-	uint32_t layout)
-{
-	Bar *bar = (Bar *)data;
-
-	bar->last_layout_idx = bar->layout_idx;
-	bar->layout_idx = layout;
-	bar->redraw_layout = true;
-}
-
-void
-dwl_wm_output_title(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
-	const char *title)
-{
-	Bar *bar;
-
-	bar = (Bar *)data;
-	if (bar->window_title)
-		free(bar->window_title);
-	if (!(bar->window_title = strdup(title)))
-		die("strdup:");
-	bar->redraw_window = true;
-}
-
-void
-dwl_wm_output_appid(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
-	const char *appid)
-{
-}
-
-void
-dwl_wm_output_layout_symbol(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
-	const char *layout)
-{
-	Bar *bar = (Bar *)data;
-	strcpy(layouts[bar->layout_idx], layout);
-	bar->layout = layouts[bar->layout_idx];
-}
-
-void
-dwl_wm_output_frame(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output)
-{
-	Bar *bar = (Bar *)data;
-	if (bar->redraw_tags)   draw_tags(bar);
-	if (bar->redraw_window) draw_window_name(bar);
-	if (bar->redraw_layout) draw_layout(bar);
-	bar->redraw = bar->redraw_tags | bar->redraw_window | bar->redraw_layout;
-}
-
-void
-dwl_wm_output_fullscreen(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
-	uint32_t is_fullscreen)
-{
-}
-
-void
-dwl_wm_output_floating(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
-	uint32_t is_floating)
-{
-}
-
-void
-dwl_wm_tags(void *data, struct zdwl_ipc_manager_v2 *dwl_wm,
-	uint32_t amount)
-{
-	if (amount != TAGCOUNT)
-		die("incorrect tagcount: have %u, expected %u", amount, TAGCOUNT);
 }
 
 void
@@ -902,6 +771,8 @@ void
 handle_global(void *data, struct wl_registry *registry,
 	      uint32_t name, const char *interface, uint32_t version)
 {
+	Bar *bar;
+	Seat *seat;
 	if (!strcmp(interface, wl_compositor_interface.name)) {
 		compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
 	} else if (!strcmp(interface, wl_shm_interface.name)) {
@@ -910,26 +781,47 @@ handle_global(void *data, struct wl_registry *registry,
 		layer_shell = wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 1);
 	} else if (!strcmp(interface, zxdg_output_manager_v1_interface.name)) {
 		output_manager = wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, 2);
-	} else if (!strcmp(interface, zdwl_ipc_manager_v2_interface.name)) {
-		dwl_wm = wl_registry_bind(registry, name, &zdwl_ipc_manager_v2_interface, 2);
-		zdwl_ipc_manager_v2_add_listener(dwl_wm, &dwl_wm_listener, NULL);
 	} else if (!strcmp(interface, wl_output_interface.name)) {
-		Bar *bar = calloc(1, sizeof(Bar));
+		bar = calloc(1, sizeof(Bar));
 		if (!bar)
 			die("calloc:");
 		bar->registry_name = name;
 		bar->wl_output = wl_registry_bind(registry, name, &wl_output_interface, 1);
 		if (run_display)
 			setup_bar(bar);
+		/* fallback because river does not honor the protocol contract correctly */
+		if (wl_list_empty(&bar_list))
+			bar->sel = true;
 		wl_list_insert(&bar_list, &bar->link);
 	} else if (!strcmp(interface, wl_seat_interface.name)) {
-		Seat *seat = calloc(1, sizeof(Seat));
+		seat = calloc(1, sizeof(Seat));
 		if (!seat)
 			die("calloc:");
 		seat->registry_name = name;
 		seat->wl_seat = wl_registry_bind(registry, name, &wl_seat_interface, 7);
 		wl_seat_add_listener(seat->wl_seat, &seat_listener, seat);
 		wl_list_insert(&seat_list, &seat->link);
+
+		if (river_status) {
+			seat->river_seat = zriver_status_manager_v1_get_river_seat_status(river_status, seat->wl_seat);
+			zriver_seat_status_v1_add_listener(seat->river_seat, &river_seat_listener, seat);
+		}
+	} else if (!strcmp(interface, zriver_status_manager_v1_interface.name)) {
+		river_status = wl_registry_bind(registry, name, &zriver_status_manager_v1_interface, 4);
+
+		wl_list_for_each(bar, &bar_list, link) {
+			if (bar->river_output == 0) {
+				bar->river_output = zriver_status_manager_v1_get_river_output_status(river_status, bar->wl_output);
+				zriver_output_status_v1_add_listener(bar->river_output, &river_output_listener, bar);
+			}
+		}
+
+		wl_list_for_each(seat, &seat_list, link) {
+			if (seat->river_seat == 0) {
+				seat->river_seat = zriver_status_manager_v1_get_river_seat_status(river_status, seat->wl_seat);
+				zriver_seat_status_v1_add_listener(seat->river_seat, &river_seat_listener, seat);
+			}
+		}
 	}
 }
 
@@ -1171,8 +1063,8 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 	i = 0;
 	do {
 		if (hide_vacant) {
-			const bool active = seat->bar->mtags & 1 << i;
-			const bool occupied = seat->bar->ctags & 1 << i;
+			const bool active = seat->bar->ftags & 1 << i;
+			const bool occupied = seat->bar->otags & 1 << i;
 			const bool urgent = seat->bar->urg & 1 << i;
 			if (!active && !occupied && !urgent)
 				continue;
@@ -1182,18 +1074,14 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 
 	if (i < TAGCOUNT) {
 		/* Clicked on tags */
-		if (seat->pointer_button == BTN_LEFT)
-			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, 1 << i, 1);
-		else if (seat->pointer_button == BTN_MIDDLE)
-			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, ~0, 1);
-		else if (seat->pointer_button == BTN_RIGHT)
-			zdwl_ipc_output_v2_set_tags(seat->bar->dwl_wm_output, seat->bar->mtags ^ (1 << i), 0);
+		if (seat->pointer_button == BTN_LEFT) {
+			snprintf(sockbuf, 256, "riverctl set-focused-tags %d", 1 << i);
+			shell_command(sockbuf);
+		} else if (seat->pointer_button == BTN_RIGHT) {
+			snprintf(sockbuf, 256, "riverctl toggle-focused-tags %d", 1 << i);
+			shell_command(sockbuf);
+		}
 	} else if (seat->pointer_x < x + draw_widths.layout) {
-		/* Clicked on layout */
-		if (seat->pointer_button == BTN_LEFT)
-			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, seat->bar->last_layout_idx);
-		else if (seat->pointer_button == BTN_RIGHT)
-			zdwl_ipc_output_v2_set_layout(seat->bar->dwl_wm_output, 2);
 	} else {
 		mic_x2 = (seat->bar->width - draw_widths.mod[m_date]) / buffer_scale;
 		vol_x1 = mic_x2 - draw_widths.mod[m_alsa] / buffer_scale;;
@@ -1413,6 +1301,102 @@ read_socket(void)
 }
 
 void
+river_focused_output(void *data, struct zriver_seat_status_v1 *zriver_seat_status_v1, struct wl_output *output)
+{
+	Bar *bar;
+	wl_list_for_each(bar, &bar_list, link) {
+		if (bar->wl_output == output) {
+			bar->sel = true;
+			return;
+		}
+	}
+}
+
+void
+river_focused_tags(void *data, struct zriver_output_status_v1 *zriver_output_status_v1, uint32_t tags)
+{
+	Bar *bar;
+	bar = (Bar*)data;
+	bar->ftags = tags;
+	draw_tags(bar);
+	bar->redraw = true;
+}
+
+void
+river_focused_view(void *data, struct zriver_seat_status_v1 *zriver_seat_status_v1, const char *title)
+{
+	Bar *bar;
+	wl_list_for_each(bar, &bar_list, link) {
+		if (bar->sel) {
+			if (bar->window_title)
+				free(bar->window_title);
+			bar->window_title = strdup(title);
+			if (!bar->window_title)
+				die("strdup:");
+			draw_window_name(bar);
+			bar->redraw = true;
+			break;
+		}
+	}
+}
+
+void
+river_layout_name(void *data, struct zriver_output_status_v1 *zriver_output_status_v1, const char *name)
+{
+	/* unused for now */
+}
+
+void
+river_layout_name_clear(void *data, struct zriver_output_status_v1 *zriver_output_status_v1)
+{
+	/* unused for now */
+}
+
+void
+river_mode(void *data, struct zriver_seat_status_v1 *zriver_seat_status_v1, const char *name)
+{
+	/* unused for now */
+}
+
+void
+river_unfocused_output(void *data, struct zriver_seat_status_v1 *zriver_seat_status_v1, struct wl_output *output)
+{
+	Bar *bar;
+	wl_list_for_each(bar, &bar_list, link) {
+		if (bar->wl_output == output) {
+			bar->sel = false;
+			break;
+		}
+	}
+}
+
+void
+river_urgent_tags(void *data, struct zriver_output_status_v1 *zriver_output_status_v1, uint32_t tags)
+{
+	Bar *bar;
+	bar = (Bar*) data;
+	bar->urg = tags;
+	draw_tags(bar);
+	bar->redraw = true;
+}
+
+void
+river_view_tags(void *data, struct zriver_output_status_v1 *zriver_output_status_v1, struct wl_array *tags)
+{
+	Bar *bar;
+	bar = (Bar*) data;
+	uint32_t tag;
+	size_t i;
+	bar->otags = 0;
+	for (i = 0; i < tags->size / sizeof(uint32_t); ++i) {
+		tag = *(((uint32_t*)tags->data) + i);
+		bar->otags |= tag;
+	}
+	draw_tags(bar);
+	bar->redraw = true;
+}
+
+void
 seat_capabilities(void *data, struct wl_seat *wl_seat,
 		  uint32_t capabilities)
 {
@@ -1445,10 +1429,10 @@ setup_bar(Bar *bar)
 		die("Could not create xdg_output");
 	zxdg_output_v1_add_listener(bar->xdg_output, &output_listener, bar);
 
-	bar->dwl_wm_output = zdwl_ipc_manager_v2_get_output(dwl_wm, bar->wl_output);
-	if (!bar->dwl_wm_output)
-		die("Could not create dwl_wm_output");
-	zdwl_ipc_output_v2_add_listener(bar->dwl_wm_output, &dwl_wm_output_listener, bar);
+	if (river_status) {
+		bar->river_output = zriver_status_manager_v1_get_river_output_status(river_status, bar->wl_output);
+		zriver_output_status_v1_add_listener(bar->river_output, &river_output_listener, bar);
+	}
 
 	if (!bar->hidden)
 		show_bar(bar);
@@ -1829,7 +1813,7 @@ teardown_bar(Bar *bar)
 {
 	if (bar->window_title)
 		free(bar->window_title);
-	zdwl_ipc_output_v2_destroy(bar->dwl_wm_output);
+	zriver_output_status_v1_destroy(bar->river_output);
 	if (bar->xdg_output_name)
 		free(bar->xdg_output_name);
 	if (!bar->hidden) {
@@ -1847,6 +1831,7 @@ teardown_bar(Bar *bar)
 void
 teardown_seat(Seat *seat)
 {
+	zriver_seat_status_v1_destroy(seat->river_seat);
 	if (seat->wl_pointer)
 		wl_pointer_destroy(seat->wl_pointer);
 	wl_seat_destroy(seat->wl_seat);
@@ -1931,7 +1916,7 @@ main(int argc, char **argv)
 	struct wl_registry *registry = wl_display_get_registry(display);
 	wl_registry_add_listener(registry, &registry_listener, NULL);
 	wl_display_roundtrip(display);
-	if (!compositor || !shm || !layer_shell || !output_manager || (!dwl_wm))
+	if (!compositor || !shm || !layer_shell || !output_manager || !river_status)
 		die("Compositor does not support all needed protocols");
 
 	/* Load selected font */
@@ -2007,7 +1992,7 @@ main(int argc, char **argv)
 
 	zwlr_layer_shell_v1_destroy(layer_shell);
 	zxdg_output_manager_v1_destroy(output_manager);
-	zdwl_ipc_manager_v2_destroy(dwl_wm);
+	zriver_status_manager_v1_destroy(river_status);
 
 	fcft_destroy(font);
 	fcft_fini();
