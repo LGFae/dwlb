@@ -1253,9 +1253,7 @@ pointer_set_image(Seat *seat, struct wl_pointer *pointer)
 static IOPrint print_io(uint64_t io_value) {
 	IOPrint ret = { "    \0" };
 
-	if (io_value == 0)
-		return ret;
-	else if (io_value < 1000)
+	if (io_value < 1000)
 		snprintf(ret.str, 5, "%3lub", io_value);
 	else if (io_value < 1000000)
 		snprintf(ret.str, 5, "%3luk", io_value / 1000);
