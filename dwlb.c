@@ -75,12 +75,12 @@ typedef struct {
 	uint32_t width, height;
 	uint32_t stride, bufsize;
 
-	uint32_t mtags, ctags, urg, sel;
+	uint32_t mtags, ctags, urg;
 	uint32_t layout_idx, last_layout_idx;
 
 	int shm_fd;
 
-	bool configured;
+	bool configured, sel;
 	bool hidden, bottom;
 	bool redraw_tags, redraw_window, redraw_layout, redraw;
 } Bar;
@@ -571,8 +571,8 @@ draw_stats(Bar *bar)
 		stats.tm.tm_year + 1900);
 	x2 = bar->width;
 	x1 = x2 - draw_widths.mod[m_date];
-	draw_background(bar, canvas, x1, x2, &active_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, DATE_PAD, &active_color.fg);
+	draw_background(bar, canvas, x1, x2, &time_color.bg);
+	draw_foreground(bar, canvas, sockbuf, x1, x2, DATE_PAD, &time_color.fg);
 
 	snprintf(sockbuf, 256, mod_fmt[m_ram], stats.mem_usage);
 	x2 = x1 - draw_widths.mod[m_alsa];
@@ -716,9 +716,7 @@ dwl_wm_output_active(void *data, struct zdwl_ipc_output_v2 *dwl_wm_output,
 	uint32_t active)
 {
 	Bar *bar = (Bar *)data;
-
-	if (active != bar->sel)
-		bar->sel = active;
+	bar->sel = true;
 }
 
 void
