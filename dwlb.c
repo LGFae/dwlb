@@ -149,8 +149,9 @@ static void die(const char *fmt, ...);
 static void draw_background(Bar const *bar, pixman_image_t *canvas, uint32_t x1, uint32_t x2, pixman_color_t const *color);
 static void draw_foreground(Bar const *bar, pixman_image_t *canvas, char const* text,
 		uint32_t x, uint32_t max_x, uint32_t padding, pixman_color_t const *color);
+static void draw_foreground_2colors(Bar const *bar, pixman_image_t *canvas, char const* text,
+		uint32_t x, uint32_t max_x, uint32_t padding, pixman_color_t const *color, int color_index);
 static void draw_alsa(Bar *bar);
-static void draw_layout(Bar *bar);
 static void draw_stats(Bar *bar);
 static void draw_tags(Bar *bar);
 static void draw_window_name(Bar *bar);
@@ -298,7 +299,6 @@ static const struct wl_registry_listener registry_listener = {
 #include "config.h"
 static struct {
 	uint32_t mod[m_TOTAL];
-	uint32_t layout;
 	uint32_t tag;
 } draw_widths;
 
@@ -356,6 +356,14 @@ alsa_get_pcapture(void)
 	return ((invol * 100) + maxv / 2) / maxv;
 }
 
+int 
+alsa_is_capture_unmuted(void)
+{
+	int value;
+	snd_mixer_selem_get_capture_switch(stats.capture, 0, &value);
+	return value;
+}
+
 uint8_t
 alsa_get_pplayback(void)
 {
@@ -365,6 +373,14 @@ alsa_get_pplayback(void)
 	maxv -= minv;
 	outvol -= minv;
 	return ((outvol * 100) + maxv / 2) / maxv;
+}
+
+int
+alsa_is_playback_unmuted(void)
+{
+	int value;
+	snd_mixer_selem_get_playback_switch(stats.playback, 0, &value);
+	return value;
 }
 
 void
@@ -445,6 +461,79 @@ draw_background(
 }
 
 void
+draw_foreground_2colors(
+	Bar const *bar,
+	pixman_image_t *canvas,
+	char const* text,
+	uint32_t x,
+	uint32_t max_x,
+	uint32_t padding,
+	pixman_color_t const *c,
+	int color_index)
+{
+	uint32_t nx;
+	uint32_t y = (bar->height + font->ascent - font->descent) / 2;
+	pixman_color_t const* color = &color_scale[color_index];
+	if (!text || !*text || !max_x)
+		return;
+
+	if ((nx = x + padding) + padding >= max_x)
+		return;
+	x = nx;
+
+	pixman_image_t *fg_fill = pixman_image_create_solid_fill(color);
+	uint32_t codepoint, state = UTF8_ACCEPT, last_cp = 0;
+	for (char const *p = text; *p; p++) {
+		/* Returns nonzero if more bytes are needed */
+		if (utf8decode(&state, &codepoint, *p))
+			continue;
+
+		/* Turn off subpixel rendering, which complicates things when
+		 * mixed with alpha channels */
+		const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(font, codepoint, FCFT_SUBPIXEL_NONE);
+		if (!glyph)
+			continue;
+
+		/* Adjust x position based on kerning with previous glyph */
+		long kern = 0;
+		if (last_cp)
+			fcft_kerning(font, last_cp, codepoint, &kern, NULL);
+		if ((nx = x + kern + glyph->advance.x) + padding > max_x)
+			break;
+		last_cp = codepoint;
+		x += kern;
+
+		/* Detect and handle pre-rendered glyphs (e.g. emoji) */
+		if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
+			/* Only the alpha channel of the mask is used, so we can
+			 * use fgfill here to blend prerendered glyphs with the
+			 * same opacity */
+			pixman_image_composite32(
+					PIXMAN_OP_OVER, glyph->pix, fg_fill, canvas, 0, 0, 0, 0,
+					x + glyph->x, y - glyph->y, glyph->width, glyph->height);
+		} else {
+			/* Applying the foreground color here would mess up
+			 * component alphas for subpixel-rendered text, so we
+			 * apply it when blending. */
+			pixman_image_composite32(
+					PIXMAN_OP_OVER, fg_fill, glyph->pix, canvas, 0, 0, 0, 0,
+					x + glyph->x, y - glyph->y, glyph->width, glyph->height);
+		}
+
+		if (color != c) {
+			pixman_image_unref(fg_fill);
+			color = c;
+			fg_fill = pixman_image_create_solid_fill(color);
+		}
+
+		/* increment pen position */
+		x = nx;
+	}
+
+	pixman_image_unref(fg_fill);
+}
+
+void
 draw_foreground(
 	Bar const *bar,
 	pixman_image_t *canvas,
@@ -513,31 +602,27 @@ void
 draw_alsa(Bar *bar)
 {
 	pixman_image_t *canvas;
-	uint32_t *data, x1, x2;
+	uint32_t *data, x1, x2, x3;
+	int playback_unmuted, capture_unmuted;
+	pixman_color_t const * color;
 
 	bar_get_canvas(bar, &canvas, &data);
 
-	snprintf(sockbuf, 256, mod_fmt[m_alsa], alsa_get_pplayback(), alsa_get_pcapture());
-	x2 = bar->width - draw_widths.mod[m_date];;
-	x1 = x2 - draw_widths.mod[m_alsa];
-	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, ALSA_PAD, &inactive_color.fg);
-
-	bar_free_canvas(bar, canvas, data);
-}
-
-void
-draw_layout(Bar *bar)
-{
-	pixman_image_t *canvas;
-	uint32_t *data;
-	const uint32_t x1 = draw_widths.tag * TAGCOUNT + draw_widths.mod[m_time];
-	const uint32_t x2 = x1 + draw_widths.layout;
-
-	bar_get_canvas(bar, &canvas, &data);
-
-	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
-	draw_foreground(bar, canvas, bar->layout, x1, x2, textpadding, &inactive_color.fg);
+	playback_unmuted = alsa_is_playback_unmuted(); 
+	capture_unmuted = alsa_is_capture_unmuted(); 
+	snprintf(sockbuf, 256, mod_fmt[m_alsa],
+			playback_unmuted ? "" : "",
+			alsa_get_pplayback(),
+			capture_unmuted  ? "" : "",
+			alsa_get_pcapture());
+	x3 = bar->width - draw_widths.mod[m_date];
+	x2 = x3 - draw_widths.mod[m_alsa] / 2;
+	x1 = x3 - draw_widths.mod[m_alsa];
+	draw_background(bar, canvas, x1, x3, &inactive_color.bg);
+	color = playback_unmuted ? &inactive_color.fg : &color_faded;
+	draw_foreground(bar, canvas, sockbuf, x1, x2, ALSA_PAD, color);
+	color = capture_unmuted ? &inactive_color.fg : &color_faded;
+	draw_foreground(bar, canvas, sockbuf + 8, x2 + ALSA_PAD, x3, 0, color);
 
 	bar_free_canvas(bar, canvas, data);
 }
@@ -547,6 +632,7 @@ draw_stats(Bar *bar)
 {
 	pixman_image_t *canvas;
 	uint32_t *data, x1, x2;
+	int color_index;
 
 	bar_get_canvas(bar, &canvas, &data);
 
@@ -571,20 +657,23 @@ draw_stats(Bar *bar)
 	snprintf(sockbuf, 256, mod_fmt[m_ram], stats.mem_usage);
 	x2 = x1 - draw_widths.mod[m_alsa];
 	x1 = x2 - draw_widths.mod[m_ram];
+	color_index = MIN(4, stats.mem_usage / 20);
 	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
+	draw_foreground_2colors(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg, color_index);
 
 	snprintf(sockbuf, 256, mod_fmt[m_cpu], stats.cpu_usage);
 	x2 = x1;
 	x1 = x2 - draw_widths.mod[m_cpu];
+	color_index = MIN(4, stats.cpu_usage / 20);
 	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
+	draw_foreground_2colors(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg, color_index);
 
 	snprintf(sockbuf, 256, mod_fmt[m_temp], stats.gpu_temperature);
 	x2 = x1;
 	x1 = x2 - draw_widths.mod[m_temp];
+	color_index = MIN(4, (stats.gpu_temperature - 30u) / 14);
 	draw_background(bar, canvas, x1, x2, &inactive_color.bg);
-	draw_foreground(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg);
+	draw_foreground_2colors(bar, canvas, sockbuf, x1, x2, STATE_PAD, &inactive_color.fg, color_index);
 
 	snprintf(sockbuf, 256, mod_fmt[m_disk], 
 			print_io((stats.cur_sectors_read - stats.prev_sectors_read) * 512).str,
@@ -651,7 +740,7 @@ draw_window_name(Bar *bar)
 {
 	pixman_image_t *canvas;
 	uint32_t *data, x2, width;
-	const uint32_t x1 = draw_widths.mod[m_time] + draw_widths.tag * TAGCOUNT + draw_widths.layout;
+	const uint32_t x1 = draw_widths.mod[m_time] + draw_widths.tag * TAGCOUNT;
 	const Color* const color = bar->sel ? &middle_sel_color : &middle_color;
 
 	width = 0;
@@ -883,7 +972,6 @@ layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
 
 	draw_alsa(bar);
 	draw_tags(bar);
-	draw_layout(bar);
 	draw_window_name(bar);
 	draw_stats(bar);
 	draw_frame(bar);
@@ -1081,7 +1169,7 @@ pointer_frame(void *data, struct wl_pointer *pointer)
 			snprintf(sockbuf, 256, "riverctl toggle-focused-tags %d", 1 << i);
 			shell_command(sockbuf);
 		}
-	} else if (seat->pointer_x < x + draw_widths.layout) {
+	} else if (seat->pointer_x < x) {
 	} else {
 		mic_x2 = (seat->bar->width - draw_widths.mod[m_date]) / buffer_scale;
 		vol_x1 = mic_x2 - draw_widths.mod[m_alsa] / buffer_scale;;
@@ -1143,7 +1231,7 @@ pointer_set_image(Seat *seat, struct wl_pointer *pointer)
 	if (!seat->bar)
 		return;
 
-	layout_x2 = draw_widths.mod[m_time] + draw_widths.tag * TAGCOUNT + draw_widths.layout;
+	layout_x2 = draw_widths.mod[m_time] + draw_widths.tag * TAGCOUNT;
 	cpu_x1 = seat->bar->width - (draw_widths.mod[m_date] + draw_widths.mod[m_alsa] + draw_widths.mod[m_ram] + draw_widths.mod[m_cpu]);
 	on_clickable =
 		   (seat->pointer_x > draw_widths.mod[m_time] && seat->pointer_x <= layout_x2)
@@ -1608,7 +1696,7 @@ stats_init(void)
 	snprintf(sockbuf, 256, mod_fmt[m_date], '0', '0', '0');
 	draw_widths.mod[m_date] = text_width(sockbuf, 0xFFFFFFFFu, DATE_PAD);;
 
-	snprintf(sockbuf, 256, mod_fmt[m_alsa], '0', '0');
+	snprintf(sockbuf, 256, mod_fmt[m_alsa], "", '0', "", '0');
 	draw_widths.mod[m_alsa] = text_width(sockbuf, 0xFFFFFFFFu, STATE_PAD);
 
 	snprintf(sockbuf, 256, mod_fmt[m_ram], '0');
@@ -1627,7 +1715,6 @@ stats_init(void)
 	draw_widths.mod[m_net] = text_width(sockbuf, 0xFFFFFFFFu, STATE_PAD);
 
 	draw_widths.tag = text_width("0", 0xFFFFFFFFu, textpadding);
-	draw_widths.layout = text_width("[]=", 0xFFFFFFFFu, textpadding);
 }
 
 void
